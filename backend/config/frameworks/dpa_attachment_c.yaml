@@ -1,0 +1,269 @@
+framework:
+  name: "DPA Attachment C -- Corporate Compliance Program"
+  short_name: "dpa_attachment_c"
+  version: "1.0"
+  description: >
+    Apprio Inc. Deferred Prosecution Agreement (June 12, 2025) Attachment C
+    Corporate Compliance Program obligations. 23 required elements organized
+    into 9 sections, evaluated by Alvarez & Marsal as the Review Team and
+    reported to DOJ Criminal Division Fraud Section and USAO District of Maryland.
+  audit_body: "Alvarez & Marsal / DOJ Criminal Division"
+  applicable_law: "18 U.S.C. § 371 (conspiracy); 15 U.S.C. §§ 78j(b), 78ff (securities fraud)"
+
+controls:
+  - id: "DPA.1"
+    title: "Senior Leadership Commitment to Compliance"
+    section: "Commitment to Compliance"
+    description: >
+      Directors and senior management provide strong, explicit, and visible
+      support and commitment to compliance with the corporate policy against
+      violations of U.S. fraud and federal program bribery laws, the Company's
+      compliance policies, and its Code of Conduct. Leadership demonstrates
+      rigorous support for compliance principles through their actions and words.
+    implementation_guidance: >
+      Evidence: Board resolutions, CEO/executive compliance statements,
+      management review meeting minutes referencing anti-fraud commitment,
+      tone-at-the-top communications to staff, leadership attestations.
+
+  - id: "DPA.2"
+    title: "Mid-Level Management Reinforcement of Compliance Culture"
+    section: "Commitment to Compliance"
+    description: >
+      Mid-level management throughout the organization reinforces leadership's
+      commitment to compliance policies and principles and encourages employees
+      to abide by them. The Company creates and fosters a culture of ethics and
+      compliance with the law in day-to-day operations at all levels.
+    implementation_guidance: >
+      Evidence: Manager compliance training records, department-level compliance
+      communications, employee survey results on compliance culture, performance
+      review criteria including compliance behavior.
+
+  - id: "DPA.3"
+    title: "Anti-Fraud and Bribery Risk Management Process"
+    section: "Periodic Risk Assessment and Review"
+    description: >
+      The Company implements a risk management process to identify, analyze,
+      and address the individual circumstances of the Company, in particular
+      the U.S. fraud and federal program bribery risks facing the Company.
+    implementation_guidance: >
+      Evidence: Anti-fraud risk register, bribery risk assessment documentation,
+      risk assessment methodology, annual risk review records.
+
+  - id: "DPA.4"
+    title: "Risk-Based Compliance Program Design and Modification"
+    section: "Periodic Risk Assessment and Review"
+    description: >
+      On the basis of its periodic risk assessment, the Company takes appropriate
+      steps to design, implement, or modify each element of its compliance program
+      to reduce the risk of violations of U.S. fraud and federal program bribery
+      laws, its compliance policies, and its Code of Conduct.
+    implementation_guidance: >
+      Evidence: Risk assessment outputs linked to program changes, compliance
+      program update logs, corrective action records referencing risk findings.
+
+  - id: "DPA.5"
+    title: "Written Anti-Fraud and Anti-Bribery Policy"
+    section: "Policies and Procedures"
+    description: >
+      The Company develops and promulgates a clearly articulated and visible
+      corporate policy against violations of U.S. fraud and federal program
+      bribery laws, which is memorialized in a written compliance policy or policies.
+    implementation_guidance: >
+      Evidence: Code of Conduct, Anti-Fraud Policy, Anti-Bribery Policy,
+      signed, dated, version-controlled, distributed to all personnel.
+
+  - id: "DPA.6"
+    title: "Anti-Fraud Compliance Policies Covering All Personnel and Partners"
+    section: "Policies and Procedures"
+    description: >
+      The Company develops and promulgates compliance policies and procedures
+      designed to reduce the prospect of violations of U.S. fraud and federal
+      program bribery laws and the Code of Conduct. Policies apply to all
+      directors, officers, and employees and, where necessary and appropriate,
+      outside parties including agents and business partners. All employees are
+      notified that compliance is an individual duty.
+    implementation_guidance: >
+      Evidence: Policy acknowledgment logs, distribution records, agent/partner
+      compliance certifications, policy scope documentation.
+
+  - id: "DPA.7"
+    title: "Internal Controls for Accuracy of Books and Records"
+    section: "Policies and Procedures"
+    description: >
+      The Company maintains a system of internal controls reasonably designed
+      to ensure the completeness and accuracy of records pertaining to U.S.
+      fraud and federal program bribery laws.
+    implementation_guidance: >
+      Evidence: Financial controls documentation, approval authority matrix,
+      segregation of duties evidence, internal audit reports on financial controls,
+      contract approval workflows.
+
+  - id: "DPA.8"
+    title: "Periodic Review and Update of Anti-Fraud Policies"
+    section: "Policies and Procedures"
+    description: >
+      The Company reviews its anti-fraud and federal program bribery compliance
+      policies and procedures as necessary to address changing and emerging risks
+      and updates them as appropriate to ensure their continued effectiveness,
+      taking into account relevant developments in the field and evolving
+      international and industry standards.
+    implementation_guidance: >
+      Evidence: Policy version history, review cycle records, update rationale
+      documentation, references to DOJ ECCP updates and industry developments.
+
+  - id: "DPA.9"
+    title: "Senior Executive Compliance Oversight with Board Access"
+    section: "Independent, Autonomous, and Empowered Oversight"
+    description: >
+      The Company assigns responsibility to one or more senior corporate
+      executives for the implementation and oversight of the Company's anti-fraud
+      and federal program bribery compliance policies and procedures.
+    implementation_guidance: >
+      Evidence: CCO/compliance officer appointment documentation, organizational
+      chart showing compliance function independence, board reporting records,
+      compliance function budget and direct board access evidence.
+
+  - id: "DPA.10"
+    title: "Anti-Fraud Training for All Personnel and Partners"
+    section: "Training and Guidance"
+    description: >
+      The Company implements mechanisms to ensure that its Code of Conduct and
+      anti-fraud and federal program bribery compliance policies and procedures
+      are effectively communicated to all directors, officers, employees, and
+      where necessary and appropriate, agents and business partners.
+    implementation_guidance: >
+      Evidence: Anti-fraud training completion records by role, curriculum docs,
+      knowledge retention results, and role-based training metrics.
+
+  - id: "DPA.11"
+    title: "Compliance Guidance and Advice System"
+    section: "Training and Guidance"
+    description: >
+      The Company maintains an effective system for providing guidance and advice
+      to personnel and relevant partners on complying with anti-fraud and
+      anti-bribery policies, including urgent requests for guidance.
+    implementation_guidance: >
+      Evidence: Compliance helpline documentation, guidance request logs,
+      escalation procedures, and urgent support process records.
+
+  - id: "DPA.12"
+    title: "Confidential Reporting and Whistleblower Protection"
+    section: "Confidential Reporting Structure and Investigation of Misconduct"
+    description: >
+      The Company maintains an effective system for internal and, where possible,
+      confidential reporting and protection of personnel and partners concerning
+      potential policy and legal violations.
+    implementation_guidance: >
+      Evidence: Ethics hotline documentation, anti-retaliation policy, whistleblower
+      training records, and anonymized reporting metrics.
+
+  - id: "DPA.13"
+    title: "Investigation and Documentation of Misconduct Allegations"
+    section: "Confidential Reporting Structure and Investigation of Misconduct"
+    description: >
+      The Company maintains a reliable, resourced process for responding to,
+      investigating, and documenting allegations of fraud/bribery misconduct.
+    implementation_guidance: >
+      Evidence: Investigation procedures, case logs, staffing documentation,
+      and documented outcomes.
+
+  - id: "DPA.14"
+    title: "Compliance-Linked Compensation and Incentive Structures"
+    section: "Compensation Structures and Consequence Management"
+    description: >
+      The Company implements clear mechanisms to incentivize compliant behavior,
+      including compliance-related criteria in compensation and bonus systems.
+    implementation_guidance: >
+      Evidence: Performance criteria with compliance factors, bonus policy
+      documentation, and HR policy updates.
+
+  - id: "DPA.15"
+    title: "Disciplinary Procedures for Compliance Violations"
+    section: "Compensation Structures and Consequence Management"
+    description: >
+      The Company institutes disciplinary procedures for violations and applies
+      them consistently regardless of role, while remediating root harms.
+    implementation_guidance: >
+      Evidence: Disciplinary policy, anonymized action records, consistency
+      review evidence, and remediation/control update records.
+
+  - id: "DPA.16"
+    title: "Third-Party Due Diligence and Compliance Requirements"
+    section: "Third-Party Management"
+    description: >
+      The Company institutes risk-based due diligence and compliance requirements
+      for retention and oversight of agents and business partners.
+    implementation_guidance: >
+      Evidence: Due diligence questionnaires, onboarding files, partner code
+      delivery records, and reciprocal certifications.
+
+  - id: "DPA.17"
+    title: "Ongoing Third-Party Monitoring and Risk Management"
+    section: "Third-Party Management"
+    description: >
+      The Company performs ongoing third-party monitoring through due diligence
+      refreshes, training, audits, and annual certifications.
+    implementation_guidance: >
+      Evidence: Monitoring schedules, annual certifications, audit records,
+      and third-party risk ratings.
+
+  - id: "DPA.18"
+    title: "Anti-Fraud Provisions in Third-Party Agreements"
+    section: "Third-Party Management"
+    description: >
+      The Company includes anti-fraud contractual provisions in agreements with
+      agents/business partners, including compliance undertakings, audit rights,
+      and termination rights for non-compliance.
+    implementation_guidance: >
+      Evidence: Contract templates, executed agreements with required clauses,
+      and review checklists.
+
+  - id: "DPA.19"
+    title: "M&A Anti-Fraud Due Diligence Policy"
+    section: "Mergers and Acquisitions"
+    description: >
+      The Company develops and implements M&A policies requiring risk-based
+      anti-fraud and anti-bribery due diligence by legal/accounting/compliance.
+    implementation_guidance: >
+      Evidence: M&A due diligence policy, compliance checklist, and sign-off records.
+
+  - id: "DPA.20"
+    title: "Compliance Program Integration for Acquired Entities"
+    section: "Mergers and Acquisitions"
+    description: >
+      The Company ensures newly acquired entities are integrated into compliance
+      policies, training, and systems as quickly as practicable.
+    implementation_guidance: >
+      Evidence: Integration timelines, training records for acquired entities,
+      integration audit reports, and ERP integration plans.
+
+  - id: "DPA.21"
+    title: "Periodic Compliance Program Review and Testing"
+    section: "Monitoring and Testing"
+    description: >
+      The Company conducts periodic reviews/testing of all compliance program
+      elements to improve prevention and detection effectiveness.
+    implementation_guidance: >
+      Evidence: Testing schedules, results, internal audit reports, and
+      effectiveness assessments.
+
+  - id: "DPA.22"
+    title: "Data Access for Compliance Monitoring and Testing"
+    section: "Monitoring and Testing"
+    description: >
+      The Company ensures compliance and control personnel have sufficient data
+      access for timely and effective transaction monitoring/testing.
+    implementation_guidance: >
+      Evidence: Data access policy, compliance access records, monitoring reports,
+      and transaction testing records.
+
+  - id: "DPA.23"
+    title: "Root Cause Analysis and Remediation of Misconduct"
+    section: "Analysis and Remediation of Misconduct"
+    description: >
+      The Company conducts root cause analysis of misconduct (including prior
+      Britt/USAID conduct), identifies systemic issues, and implements timely
+      remediation communicated to management.
+    implementation_guidance: >
+      Evidence: Root cause analyses, remediation plans, completion evidence,
+      management communications, and control enhancement records.

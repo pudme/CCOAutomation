@@ -1,0 +1,2 @@
+hostname,agent_version,status,platform
+host-01,7.18.0,online,windows

@@ -1,0 +1,351 @@
+import asyncio
+from datetime import datetime, timedelta, timezone
+import importlib
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from loguru import logger
+from minio import Minio
+from minio.error import S3Error
+from sqlalchemy import select, text
+
+from config import get_settings
+from database import init_db
+from routers import (
+    auditor as auditor_router,
+    chat,
+    controls,
+    dashboard,
+    documents,
+    evidence,
+    findings,
+    frameworks,
+    history,
+    ingest,
+    obligations,
+    personnel,
+    reports,
+    settings as settings_router,
+)
+from routers.settings import seed_audit_date_settings, seed_api_usage_settings
+from database import AsyncSessionLocal
+from models.compliance import AppSetting, BatchImport, DataImport, ImportStatus
+from services.background_jobs import run_background_job_worker
+from services.import_pipeline import (
+    backfill_missing_content_hashes_if_needed,
+    process_batch_import,
+    process_import,
+    run_embedding_migration_if_needed,
+)
+
+settings = get_settings()
+import_router = importlib.import_module("routers.import")
+_background_worker_task: asyncio.Task[None] | None = None
+
+app = FastAPI(title="Compliance Platform API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.on_event("startup")
+async def startup_event() -> None:
+    global _background_worker_task
+    await init_db()
+    await _ensure_auditor_schema_columns()
+    await _cleanup_stale_imports_on_startup()
+    content_hash_backfill_stats = await backfill_missing_content_hashes_if_needed(null_ratio_threshold=0.5)
+    if content_hash_backfill_stats.get("ran"):
+        logger.info(
+            "Content hash backfill completed: updated={}, errors={}, null_hash_before={}/{} ({:.1f}%)",
+            content_hash_backfill_stats.get("updated", 0),
+            content_hash_backfill_stats.get("errors", 0),
+            content_hash_backfill_stats.get("null_hash_imports", 0),
+            content_hash_backfill_stats.get("total_imports", 0),
+            float(content_hash_backfill_stats.get("null_ratio", 0.0)) * 100.0,
+        )
+    else:
+        logger.info(
+            "Content hash backfill skipped: null_hash_imports={}/{} ({:.1f}%), threshold=50%",
+            content_hash_backfill_stats.get("null_hash_imports", 0),
+            content_hash_backfill_stats.get("total_imports", 0),
+            float(content_hash_backfill_stats.get("null_ratio", 0.0)) * 100.0,
+        )
+    await _resume_queued_imports()
+    await prewarm_chromadb()
+    embedding_migration_stats = await run_embedding_migration_if_needed(threshold=400)
+    if embedding_migration_stats.get("skipped"):
+        logger.info(
+            "Embedding migration skipped: compliance_docs count={} threshold met",
+            embedding_migration_stats.get("current_count", 0),
+        )
+    else:
+        logger.info(
+            "Embedding migration complete: checked={}, reembedded={}, missing_text={}, errors={}, final_count={}",
+            embedding_migration_stats.get("checked_imports", 0),
+            embedding_migration_stats.get("reembedded", 0),
+            embedding_migration_stats.get("missing_text", 0),
+            embedding_migration_stats.get("errors", 0),
+            embedding_migration_stats.get("final_count", 0),
+        )
+    _ensure_minio_bucket()
+    async with AsyncSessionLocal() as session:
+        await seed_audit_date_settings(session)
+        await seed_api_usage_settings(session)
+    async with AsyncSessionLocal() as session:
+        worker_setting = (
+            await session.execute(
+                select(AppSetting).where(AppSetting.key == "background_jobs_enabled")
+            )
+        ).scalars().first()
+    worker_enabled = (worker_setting.value if worker_setting else "true").lower() == "true"
+    if worker_enabled and (_background_worker_task is None or _background_worker_task.done()):
+        _background_worker_task = asyncio.create_task(run_background_job_worker())
+    else:
+        logger.info("Background job worker startup skipped (background_jobs_enabled=false)")
+    logger.info("Compliance Platform API started")
+
+
+@app.on_event("shutdown")
+async def shutdown_event() -> None:
+    global _background_worker_task
+    if _background_worker_task is not None and not _background_worker_task.done():
+        _background_worker_task.cancel()
+        try:
+            await _background_worker_task
+        except asyncio.CancelledError:
+            pass
+    _background_worker_task = None
+
+
+async def prewarm_chromadb() -> None:
+    try:
+        import chromadb
+
+        client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
+        collection = client.get_or_create_collection("compliance_docs")
+        logger.info(
+            "ChromaDB pre-warmed: compliance_docs has {} documents",
+            collection.count(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ChromaDB pre-warm failed (non-fatal): {}", exc)
+
+
+async def _ensure_auditor_schema_columns() -> None:
+    statements = [
+        "ALTER TABLE IF EXISTS data_imports ADD COLUMN IF NOT EXISTS batch_id VARCHAR(64)",
+        "ALTER TABLE IF EXISTS data_imports ADD COLUMN IF NOT EXISTS auditor_engagement_name VARCHAR(255)",
+        "ALTER TABLE IF EXISTS data_imports ADD COLUMN IF NOT EXISTS auditor_engagement_type VARCHAR(120)",
+        "ALTER TABLE IF EXISTS data_imports ADD COLUMN IF NOT EXISTS auditor_certification_body VARCHAR(120)",
+        "ALTER TABLE IF EXISTS data_imports ADD COLUMN IF NOT EXISTS auditor_period_year VARCHAR(4)",
+        "ALTER TABLE IF EXISTS data_imports ADD COLUMN IF NOT EXISTS auditor_merge_with_existing BOOLEAN",
+        "ALTER TABLE IF EXISTS data_imports ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE IF EXISTS data_imports ADD COLUMN IF NOT EXISTS library VARCHAR(16) NOT NULL DEFAULT 'main'",
+        "ALTER TABLE IF EXISTS data_imports ADD COLUMN IF NOT EXISTS file_size INTEGER",
+        "ALTER TABLE IF EXISTS data_imports ADD COLUMN IF NOT EXISTS content_hash VARCHAR(64)",
+        "ALTER TABLE IF EXISTS data_imports ADD COLUMN IF NOT EXISTS duplicate_status VARCHAR(32) NOT NULL DEFAULT 'unique'",
+        "ALTER TABLE IF EXISTS data_imports ADD COLUMN IF NOT EXISTS duplicate_of_id INTEGER REFERENCES data_imports(id)",
+        "ALTER TABLE IF EXISTS data_imports ADD COLUMN IF NOT EXISTS duplicate_confidence VARCHAR(16)",
+        "ALTER TABLE IF EXISTS data_imports ADD COLUMN IF NOT EXISTS duplicate_reason TEXT",
+        "ALTER TABLE IF EXISTS data_imports ADD COLUMN IF NOT EXISTS duplicate_flag_dismissed BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE IF EXISTS auditor_checklists ADD COLUMN IF NOT EXISTS audit_type VARCHAR(120)",
+        "ALTER TABLE IF EXISTS auditor_checklists ADD COLUMN IF NOT EXISTS audit_period_year VARCHAR(4)",
+        "ALTER TABLE IF EXISTS auditor_checklists ADD COLUMN IF NOT EXISTS fields_found JSON",
+        "ALTER TABLE IF EXISTS auditor_checklists ADD COLUMN IF NOT EXISTS last_evidence_refresh VARCHAR(32)",
+        "ALTER TABLE IF EXISTS auditor_checklists ADD COLUMN IF NOT EXISTS evidence_refresh_status VARCHAR(24)",
+        "ALTER TABLE IF EXISTS auditor_checklists ADD COLUMN IF NOT EXISTS evidence_refresh_error TEXT",
+        "ALTER TABLE IF EXISTS auditor_checklist_items ADD COLUMN IF NOT EXISTS source_import_id INTEGER",
+        "ALTER TABLE IF EXISTS auditor_checklist_items ADD COLUMN IF NOT EXISTS raw_fields JSON",
+        "ALTER TABLE IF EXISTS auditor_checklist_items ADD COLUMN IF NOT EXISTS evidence_mapping JSON",
+        "ALTER TABLE IF EXISTS batch_imports ADD COLUMN IF NOT EXISTS skipped_files JSON",
+        "ALTER TABLE IF EXISTS evidence_items ADD COLUMN IF NOT EXISTS analysis_confidence VARCHAR(16)",
+        "ALTER TABLE IF EXISTS evidence_items ADD COLUMN IF NOT EXISTS analysis_summary TEXT",
+        "ALTER TABLE IF EXISTS evidence_items ADD COLUMN IF NOT EXISTS library VARCHAR(16) NOT NULL DEFAULT 'main'",
+        "ALTER TABLE IF EXISTS controls ADD COLUMN IF NOT EXISTS description TEXT",
+        "ALTER TABLE IF EXISTS controls ADD COLUMN IF NOT EXISTS implementation_guidance TEXT",
+        (
+            "CREATE TABLE IF NOT EXISTS background_jobs ("
+            "id SERIAL PRIMARY KEY,"
+            "job_type VARCHAR(80) NOT NULL,"
+            "status VARCHAR(24) NOT NULL DEFAULT 'queued',"
+            "payload JSON,"
+            "result JSON,"
+            "error_message TEXT,"
+            "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            "started_at TIMESTAMPTZ NULL,"
+            "finished_at TIMESTAMPTZ NULL"
+            ")"
+        ),
+        (
+            "CREATE TABLE IF NOT EXISTS change_log ("
+            "id SERIAL PRIMARY KEY,"
+            "timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            "category VARCHAR(32) NOT NULL,"
+            "action VARCHAR(64) NOT NULL,"
+            "subject VARCHAR(255),"
+            "detail TEXT,"
+            "triggered_by VARCHAR(64) NOT NULL DEFAULT 'system'"
+            ")"
+        ),
+    ]
+    async with AsyncSessionLocal() as session:
+        for statement in statements:
+            await session.execute(text(statement))
+        await session.commit()
+
+
+async def _cleanup_stale_imports_on_startup() -> None:
+    now = datetime.now(timezone.utc)
+    stale_processing_cutoff = now - timedelta(minutes=30)
+    batch_timeout_cutoff = now - timedelta(hours=4)
+
+    async with AsyncSessionLocal() as session:
+        stale_processing_records = list(
+            (
+                await session.execute(
+                    select(DataImport).where(
+                        DataImport.status == ImportStatus.PROCESSING,
+                        DataImport.updated_at < stale_processing_cutoff,
+                    )
+                )
+            ).scalars()
+        )
+        for record in stale_processing_records:
+            record.status = ImportStatus.FAILED
+            record.error_message = "Stale — server restarted mid-processing"
+            record.updated_at = now
+
+        stale_queued_records = list(
+            (
+                await session.execute(
+                    select(DataImport).where(
+                        DataImport.status == ImportStatus.QUEUED,
+                        DataImport.updated_at < batch_timeout_cutoff,
+                    )
+                )
+            ).scalars()
+        )
+        for record in stale_queued_records:
+            record.status = ImportStatus.FAILED
+            record.error_message = "Batch timeout"
+            record.updated_at = now
+
+        timed_out_batches = list(
+            (
+                await session.execute(
+                    select(BatchImport).where(BatchImport.created_at < batch_timeout_cutoff)
+                )
+            ).scalars()
+        )
+        for batch in timed_out_batches:
+            unresolved_records = list(
+                (
+                    await session.execute(
+                        select(DataImport).where(
+                            DataImport.batch_id == batch.batch_id,
+                            DataImport.status.in_([ImportStatus.QUEUED, ImportStatus.PROCESSING]),
+                            DataImport.updated_at < batch_timeout_cutoff,
+                        )
+                    )
+                ).scalars()
+            )
+            for record in unresolved_records:
+                record.status = ImportStatus.FAILED
+                record.error_message = "Batch timeout"
+                record.updated_at = now
+
+        await session.commit()
+        logger.info(
+            "Startup import cleanup complete: stale_processing={}, stale_queued={}, batch_timeout_batches={}",
+            len(stale_processing_records),
+            len(stale_queued_records),
+            len(timed_out_batches),
+        )
+
+
+async def _resume_queued_imports() -> None:
+    now = datetime.now(timezone.utc)
+    resume_cutoff = now - timedelta(hours=4)
+    async with AsyncSessionLocal() as session:
+        queued_records = list(
+            (
+                await session.execute(
+                    select(DataImport).where(
+                        DataImport.status == ImportStatus.QUEUED,
+                        DataImport.updated_at >= resume_cutoff,
+                    )
+                )
+            ).scalars()
+        )
+    if not queued_records:
+        logger.info("Startup queued import resume: nothing to resume")
+        return
+
+    by_batch: dict[str, list[int]] = {}
+    unbatched: list[int] = []
+    for record in queued_records:
+        if record.batch_id:
+            by_batch.setdefault(record.batch_id, []).append(record.id)
+        else:
+            unbatched.append(record.id)
+
+    for batch_id, import_ids in by_batch.items():
+        asyncio.create_task(process_batch_import(batch_id=batch_id, import_ids=sorted(import_ids)))
+    for import_id in sorted(unbatched):
+        asyncio.create_task(process_import(import_id=import_id, content=""))
+
+    logger.info(
+        "Startup queued import resume launched: queued_records={}, batches={}, unbatched={}",
+        len(queued_records),
+        len(by_batch),
+        len(unbatched),
+    )
+
+
+def _ensure_minio_bucket() -> None:
+    client = Minio(
+        endpoint=settings.minio_endpoint,
+        access_key=settings.minio_access_key,
+        secret_key=settings.minio_secret_key,
+        secure=False,
+    )
+    try:
+        if not client.bucket_exists(settings.minio_bucket):
+            client.make_bucket(settings.minio_bucket)
+    except S3Error as exc:
+        logger.error(f"MinIO bucket initialization failed: {exc}")
+        raise
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    settings = get_settings()
+    return {
+        "status": "ok",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "anthropic_configured": "yes" if bool(settings.anthropic_api_key) else "no",
+    }
+
+
+app.include_router(frameworks.router)
+app.include_router(controls.router)
+app.include_router(evidence.router)
+app.include_router(findings.router)
+app.include_router(history.router)
+app.include_router(obligations.router)
+app.include_router(personnel.router)
+app.include_router(documents.router)
+app.include_router(reports.router)
+app.include_router(ingest.router)
+app.include_router(chat.router)
+app.include_router(dashboard.router)
+app.include_router(import_router.router)
+app.include_router(settings_router.router)
+app.include_router(auditor_router.router, prefix="/auditor")
+

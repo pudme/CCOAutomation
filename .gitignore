@@ -1,0 +1,15 @@
+.env
+__pycache__/
+.next/
+node_modules/
+*.pyc
+.DS_Store
+db/
+chroma_data/
+postgres_data/
+minio_data/
+tmp_sync_test/
+tmp_sync_verify/
+*.log
+.vscode/
+.idea/

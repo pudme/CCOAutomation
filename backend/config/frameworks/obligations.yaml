@@ -1,0 +1,7 @@
+framework:
+  name: "External Obligations"
+  version: "1.0"
+  short_name: "obligations"
+  description: "Non-framework compliance obligations register"
+  active: true
+controls: []

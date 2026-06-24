@@ -1,0 +1,6 @@
+External Auditor Checklist - Pre-Audit Evidence Requests
+1. Please provide your active employee list and corresponding access rights review.
+2. Provide evidence that MFA is enabled for all active personnel.
+3. Provide training completion records for the current audit cycle.
+4. Provide evidence of account deprovisioning for terminated users within 24 hours.
+5. Provide latest vulnerability and endpoint protection report.

@@ -1,0 +1,291 @@
+---
+framework:
+  name: "ISO/IEC 20000-1:2018"
+  version: "2018"
+  short_name: "iso20000"
+  description: "IT service management systems — Requirements"
+  certification_body: "External auditor (surveillance audit May 2026)"
+  active: true
+
+controls:
+  - id: "4.1"
+    title: Understanding the organization and its context
+    domain: Context of the Organization
+    owner_default: Chief Compliance Officer
+    review_cadence_days: 365
+    evidence_required:
+      - type: record
+        description: Internal and external issues register relevant to IT service management
+    maps_to:
+      iso27001: [A.5.1]
+
+  - id: "4.3"
+    title: Determining the scope of the SMS
+    domain: Context of the Organization
+    owner_default: Chief Compliance Officer
+    review_cadence_days: 365
+    evidence_required:
+      - type: record
+        description: SMS scope document defining boundaries of IT service management system
+    maps_to:
+      iso27001: []
+
+  - id: "5.1"
+    title: Leadership and commitment
+    domain: Leadership
+    owner_default: Chief Executive Officer
+    review_cadence_days: 365
+    evidence_required:
+      - type: attestation
+        description: Management attestation of commitment to SMS
+      - type: record
+        description: Management review meeting minutes
+    maps_to:
+      iso27001: [A.5.4]
+
+  - id: "5.2"
+    title: Policy
+    domain: Leadership
+    owner_default: Chief Compliance Officer
+    review_cadence_days: 365
+    evidence_required:
+      - type: policy
+        description: IT service management policy approved by top management
+    maps_to:
+      iso27001: [A.5.1]
+
+  - id: "5.3"
+    title: Organizational roles, responsibilities and authorities
+    domain: Leadership
+    owner_default: Chief Compliance Officer
+    review_cadence_days: 365
+    evidence_required:
+      - type: policy
+        description: Roles and responsibilities document for IT service management
+    maps_to:
+      iso27001: [A.5.2]
+
+  - id: "6.1"
+    title: Actions to address risks and opportunities
+    domain: Planning
+    owner_default: Chief Compliance Officer
+    review_cadence_days: 365
+    evidence_required:
+      - type: record
+        description: Risk register for IT service management
+      - type: record
+        description: Risk treatment plan
+    maps_to:
+      iso27001: [A.5.7]
+
+  - id: "6.2"
+    title: Service management objectives and planning
+    domain: Planning
+    owner_default: Chief Compliance Officer
+    review_cadence_days: 365
+    evidence_required:
+      - type: record
+        description: IT service management objectives with measurable targets and KPIs
+    maps_to:
+      iso27001: []
+
+  - id: "7.1"
+    title: Resources
+    domain: Support
+    owner_default: Chief Compliance Officer
+    review_cadence_days: 365
+    evidence_required:
+      - type: record
+        description: Evidence of resources allocated to IT service management
+    maps_to:
+      iso27001: []
+
+  - id: "7.2"
+    title: Competence
+    domain: Support
+    owner_default: Human Resources
+    review_cadence_days: 365
+    evidence_required:
+      - type: record
+        description: Training records and competency evidence for IT service management staff
+    maps_to:
+      iso27001: [A.6.3]
+
+  - id: "7.3"
+    title: Awareness
+    domain: Support
+    owner_default: Chief Compliance Officer
+    review_cadence_days: 365
+    evidence_required:
+      - type: record
+        description: Awareness program evidence for SMS policies and objectives
+    maps_to:
+      iso27001: [A.6.3]
+
+  - id: "7.4"
+    title: Communication
+    domain: Support
+    owner_default: Chief Compliance Officer
+    review_cadence_days: 365
+    evidence_required:
+      - type: record
+        description: Communication plan or evidence of SMS-related communications
+    maps_to:
+      iso27001: []
+
+  - id: "7.5"
+    title: Documented information
+    domain: Support
+    owner_default: Chief Compliance Officer
+    review_cadence_days: 365
+    evidence_required:
+      - type: record
+        description: Document control procedure and list of controlled documents
+    maps_to:
+      iso27001: [A.5.33]
+
+  - id: "8.1"
+    title: Operational planning and control
+    domain: Operation
+    owner_default: IT
+    review_cadence_days: 365
+    evidence_required:
+      - type: record
+        description: Documented operating procedures for IT service delivery
+    maps_to:
+      iso27001: [A.5.37]
+
+  - id: "8.2"
+    title: Service portfolio
+    domain: Operation
+    owner_default: IT
+    review_cadence_days: 365
+    evidence_required:
+      - type: record
+        description: Service catalog or portfolio documenting all IT services delivered
+    maps_to:
+      iso27001: []
+
+  - id: "8.3"
+    title: Relationship and agreement management
+    domain: Operation
+    owner_default: Chief Compliance Officer
+    review_cadence_days: 365
+    evidence_required:
+      - type: record
+        description: Supplier agreements with IT service management clauses
+      - type: record
+        description: Customer/stakeholder agreement documentation
+    maps_to:
+      iso27001: [A.5.19, A.5.20]
+
+  - id: "8.4"
+    title: Supply and demand management
+    domain: Operation
+    owner_default: IT
+    review_cadence_days: 365
+    evidence_required:
+      - type: record
+        description: Capacity management evidence including demand forecasting
+    maps_to:
+      iso27001: [A.8.6]
+
+  - id: "8.5"
+    title: Service design, build and transition
+    domain: Operation
+    owner_default: IT
+    review_cadence_days: 365
+    evidence_required:
+      - type: record
+        description: Change and release management process evidence
+      - type: record
+        description: Service transition records
+    maps_to:
+      iso27001: [A.8.32]
+
+  - id: "8.6"
+    title: Resolution and fulfilment
+    domain: Operation
+    owner_default: IT
+    review_cadence_days: 365
+    evidence_required:
+      - type: record
+        description: Incident management records
+      - type: record
+        description: Service request fulfilment records
+    maps_to:
+      iso27001: [A.5.24, A.5.26]
+
+  - id: "8.7"
+    title: Service assurance
+    domain: Operation
+    owner_default: IT
+    review_cadence_days: 365
+    evidence_required:
+      - type: record
+        description: Service availability and continuity management evidence
+      - type: record
+        description: Service level monitoring and reporting
+    maps_to:
+      iso27001: [A.5.29, A.5.30, A.8.14]
+
+  - id: "9.1"
+    title: Monitoring, measurement, analysis and evaluation
+    domain: Performance Evaluation
+    owner_default: Chief Compliance Officer
+    review_cadence_days: 180
+    evidence_required:
+      - type: record
+        description: Performance monitoring reports and KPI results
+      - type: record
+        description: Service level achievement reports
+    maps_to:
+      iso27001: []
+
+  - id: "9.2"
+    title: Internal audit
+    domain: Performance Evaluation
+    owner_default: Chief Compliance Officer
+    review_cadence_days: 365
+    evidence_required:
+      - type: record
+        description: Internal audit report covering SMS scope
+      - type: record
+        description: Signed audit program
+    maps_to:
+      iso27001: [A.5.35]
+
+  - id: "9.3"
+    title: Management review
+    domain: Performance Evaluation
+    owner_default: Chief Executive Officer
+    review_cadence_days: 365
+    evidence_required:
+      - type: record
+        description: Management review meeting minutes covering SMS performance
+    maps_to:
+      iso27001: []
+
+  - id: "10.1"
+    title: Nonconformity and corrective action
+    domain: Improvement
+    owner_default: Chief Compliance Officer
+    review_cadence_days: 365
+    evidence_required:
+      - type: record
+        description: Corrective action records for SMS nonconformities
+    maps_to:
+      iso27001: []
+
+  - id: "10.2"
+    title: Continual improvement
+    domain: Improvement
+    owner_default: Chief Compliance Officer
+    review_cadence_days: 365
+    evidence_required:
+      - type: record
+        description: Continual improvement log or initiative records
+      - type: record
+        description: Evidence of improvement actions taken
+    maps_to:
+      iso27001: []
