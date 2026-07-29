@@ -20,10 +20,11 @@ from sqlalchemy.orm import selectinload
 from ai.gateway import estimate_batch_cost, get_usage_today, is_daily_limit_exception
 from config import get_settings
 from database import AsyncSessionLocal, get_db
-from models.compliance import AppSetting, Control, ControlStatus, DataImport, EvidenceItem, EvidenceStatus, ImportStatus
+from models.compliance import AppSetting, Control, ControlStatus, DataImport, EvidenceControlLink, EvidenceItem, EvidenceStatus, ImportStatus
 from models.auditor import AuditorChecklist, AuditorChecklistItem, AuditorItemStatus
 from services.background_jobs import load_status, queue_reanalyze_job
 from services.change_log import log_change
+from services.document_sync import classify_sync_files, normalize_library, normalize_sync_name
 from services.import_pipeline import (
     build_import_object_name,
     compute_content_hash,
@@ -73,7 +74,7 @@ async def list_documents(
         (
             await session.execute(
                 select(EvidenceItem).where(EvidenceItem.library == normalized_library).options(
-                    selectinload(EvidenceItem.controls).selectinload(Control.framework)
+                    selectinload(EvidenceItem.control_links).selectinload(EvidenceControlLink.control).selectinload(Control.framework)
                 )
             )
         ).scalars()
@@ -201,11 +202,11 @@ class SyncPreviewRequest(BaseModel):
 
 
 def _normalize_sync_name(value: str) -> str:
-    return str(value or "").strip().lower()
+    return normalize_sync_name(value)
 
 
 def _normalize_library(value: str | None) -> str:
-    return (value or "main").strip().lower() or "main"
+    return normalize_library(value)
 
 
 async def _classify_sync_files(
@@ -214,94 +215,8 @@ async def _classify_sync_files(
     files: list[dict[str, Any]],
     library: str,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    imports_all = list(
-        (
-            await session.execute(
-                select(DataImport)
-                .order_by(DataImport.created_at.desc())
-            )
-        ).scalars()
-    )
-    imports = [row for row in imports_all if _normalize_library(row.library) == library]
-    by_name: dict[str, DataImport] = {}
-    by_name_main: dict[str, DataImport] = {}
-    for row in imports:
-        key = _normalize_sync_name(row.filename)
-        if key and key not in by_name:
-            by_name[key] = row
-    if library == "dpa":
-        for row in imports_all:
-            if _normalize_library(row.library) != "main":
-                continue
-            key = _normalize_sync_name(row.filename)
-            if key and key not in by_name_main:
-                by_name_main[key] = row
-
-    actions: list[dict[str, Any]] = []
-    summary = {
-        "total_scanned": len(files),
-        "new": 0,
-        "modified": 0,
-        "unchanged": 0,
-        "skipped": 0,
-        "new_files": [],
-        "modified_files": [],
-        "new_details": [],
-        "modified_details": [],
-        "errors": [],
-        "main_library_collisions": [],
-    }
-    for file in files:
-        filename = str(file.get("filename") or "").strip()
-        if not filename:
-            summary["skipped"] += 1
-            summary["errors"].append("Missing filename")
-            continue
-        file_size = int(file.get("size") or 0)
-        if library == "dpa" and _normalize_sync_name(filename) in by_name_main:
-            summary["main_library_collisions"].append(filename)
-        incoming_hash = str(file.get("content_hash") or "").strip().lower() or None
-        existing = by_name.get(_normalize_sync_name(filename))
-        if existing is None:
-            summary["new"] += 1
-            summary["new_files"].append(filename)
-            actions.append({"mode": "new", "filename": filename, "size": file_size, "existing": None})
-            continue
-
-        existing_hash = (existing.content_hash or "").strip().lower() or None
-        if existing_hash and incoming_hash:
-            if existing_hash == incoming_hash:
-                summary["unchanged"] += 1
-                actions.append(
-                    {
-                        "mode": "unchanged",
-                        "filename": filename,
-                        "size": file_size,
-                        "content_hash": incoming_hash,
-                        "existing": existing,
-                    }
-                )
-                continue
-        elif existing.file_size is not None and int(existing.file_size) == file_size:
-            summary["unchanged"] += 1
-            actions.append({"mode": "unchanged", "filename": filename, "size": file_size, "existing": existing})
-            continue
-
-        summary["modified"] += 1
-        summary["modified_files"].append(filename)
-        actions.append(
-            {
-                "mode": "modified",
-                "filename": filename,
-                "size": file_size,
-                "content_hash": incoming_hash,
-                "existing": existing,
-            }
-        )
-
-    if summary["total_scanned"] > 0 and summary["new"] == 0 and summary["modified"] == 0:
-        summary["up_to_date"] = True
-    return summary, actions
+    # Shared implementation — do not duplicate hash/filename classify logic here.
+    return await classify_sync_files(session, files=files, library=library)
 
 
 @router.get("/reanalyze-batch-preview")
@@ -798,7 +713,9 @@ async def refresh_evidence_links(session: AsyncSession = Depends(get_db)) -> dic
     controls = list(
         (
             await session.execute(
-                select(Control).options(selectinload(Control.evidence_items))
+                select(Control).options(
+                    selectinload(Control.evidence_links).selectinload(EvidenceControlLink.evidence)
+                )
             )
         ).scalars()
     )
@@ -1019,7 +936,11 @@ async def preview_document(document_id: str, session: AsyncSession = Depends(get
         item = (
             await session.execute(
                 select(EvidenceItem)
-                .options(selectinload(EvidenceItem.controls))
+                .options(
+                    selectinload(EvidenceItem.control_links)
+                    .selectinload(EvidenceControlLink.control)
+                    .selectinload(Control.framework)
+                )
                 .where(EvidenceItem.id == int(raw_id))
             )
         ).scalar_one_or_none()

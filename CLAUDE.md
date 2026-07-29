@@ -73,7 +73,7 @@ This is a full-stack web application that runs locally on a Mac.
 ### AI Engine
 | Component     | Choice                  | Purpose                                         |
 |---------------|-------------------------|-------------------------------------------------|
-| Model         | claude-sonnet-4-20250514| Primary reasoning, ingestion, chat              |
+| Model         | claude-sonnet-4-5-20250929| Primary reasoning, ingestion, chat              |
 | Interface     | Anthropic Python SDK    | Tool use, streaming, multi-turn conversations   |
 | Pattern       | Agentic tool use loop   | Agent decides what to read/write/update         |
 
@@ -143,7 +143,9 @@ compliance_platform/
 │   ├── database.py                    # Async SQLAlchemy engine + session factory
 │   ├── models/
 │   │   ├── compliance.py              # All ORM models (see schema section below)
-│   │   └── personnel.py              # PersonnelRecord
+│   │   ├── personnel.py              # PersonnelRecord re-export
+│   │   ├── auditor.py                # Auditor checklist models
+│   │   └── workforce.py              # WorkforceStaff / Pursuit / Assignment / Gap
 │   ├── routers/
 │   │   ├── frameworks.py
 │   │   ├── controls.py
@@ -151,6 +153,7 @@ compliance_platform/
 │   │   ├── findings.py
 │   │   ├── obligations.py
 │   │   ├── personnel.py
+│   │   ├── workforce.py              # Workforce Alignment CRUD + analysis
 │   │   ├── documents.py
 │   │   ├── reports.py
 │   │   ├── ingest.py                  # Notion + file ingestion endpoints
@@ -170,6 +173,7 @@ compliance_platform/
 │   ├── services/
 │   │   ├── gap_scanner.py
 │   │   ├── personnel_checker.py       # Five cross-reference checks (see below)
+│   │   ├── workforce_alignment.py     # Gap analysis + overcommitment (Apprio-default)
 │   │   ├── doc_generator.py           # Generate .docx and .pdf outputs
 │   │   └── scorecard.py
 │   ├── workers/
@@ -196,7 +200,7 @@ compliance_platform/
 
 ## AI Agent — Tools
 
-The agent (backend/ai/agent.py) runs Claude claude-sonnet-4-20250514 with tool use.
+The agent (backend/ai/agent.py) runs Claude claude-sonnet-4-5-20250929 with tool use.
 It loops until the task is complete, streaming each action and response back to the
 frontend via SSE. All tool calls that modify data are logged to agent_action_log.
 
@@ -500,6 +504,35 @@ Five sequential cross-references run against HR and system data:
 
 5. **CMMC extension** — when CMMC framework is loaded, add: background
    screening status (PS.L2-3.9.1) and user access review cadence (AC.L2-3.1.3).
+
+---
+
+## Workforce Alignment
+
+Workforce Alignment tracks staffing against pursuits (e.g. live contracts and bids):
+`WorkforceStaff`, `WorkforcePursuit`, `WorkforceAssignment`, and `WorkforceGap`
+under `backend/models/workforce.py`, with CRUD at `/workforce/*` and gap /
+overcommitment logic in `backend/services/workforce_alignment.py`.
+
+**Relationship to `personnel_records`:** `WorkforceStaff` is a **standalone roster**
+maintained directly via the API/UI. `personnel_id` is an **optional link** to a
+compliance `personnel_records` row for cross-reference when both happen to exist —
+**not a data source**. `personnel_records` holds compliance-evidence fields only
+(MFA, training, NDA, background check, Entra sync); it does not and will not hold
+staffing fields (labor category, clearance level, utilization, skills, rates, etc.).
+
+The former `POST /workforce/staff/import-from-personnel` endpoint is **deprecated
+and removed**. It only ever copied identity plumbing (`personnel_id`,
+`display_name`, `entity`) and added complexity without real staffing value.
+
+**Intended data path:** HR-provided staffing data will be manually requested and
+uploaded into CCOA as a document, not synced automatically. No ingestion pipeline
+exists for this yet, and none is being built in the current session.
+
+Agent tools (read/write as appropriate): `get_staffing_gaps`,
+`check_overcommitment`, `flag_staffing_gap`, `assign_staff`. Gap analysis and
+overcommitment default to Apprio-only staff (`include_canaide=False`); set
+`include_canaide=True` for cross-entity visibility while Canaide is divesting.
 
 ---
 

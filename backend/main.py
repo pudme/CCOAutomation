@@ -26,11 +26,13 @@ from routers import (
     personnel,
     reports,
     settings as settings_router,
+    workforce,
 )
 from routers.settings import seed_audit_date_settings, seed_api_usage_settings
 from database import AsyncSessionLocal
 from models.compliance import AppSetting, BatchImport, DataImport, ImportStatus
 from services.background_jobs import run_background_job_worker
+from services.evidence_watch import run_evidence_watch_loop
 from services.import_pipeline import (
     backfill_missing_content_hashes_if_needed,
     process_batch_import,
@@ -41,6 +43,7 @@ from services.import_pipeline import (
 settings = get_settings()
 import_router = importlib.import_module("routers.import")
 _background_worker_task: asyncio.Task[None] | None = None
+_evidence_watch_task: asyncio.Task[None] | None = None
 
 app = FastAPI(title="Compliance Platform API")
 
@@ -55,7 +58,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event() -> None:
-    global _background_worker_task
+    global _background_worker_task, _evidence_watch_task
     await init_db()
     await _ensure_auditor_schema_columns()
     await _cleanup_stale_imports_on_startup()
@@ -108,19 +111,26 @@ async def startup_event() -> None:
         _background_worker_task = asyncio.create_task(run_background_job_worker())
     else:
         logger.info("Background job worker startup skipped (background_jobs_enabled=false)")
+    if _evidence_watch_task is None or _evidence_watch_task.done():
+        _evidence_watch_task = asyncio.create_task(run_evidence_watch_loop())
     logger.info("Compliance Platform API started")
 
 
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
-    global _background_worker_task
-    if _background_worker_task is not None and not _background_worker_task.done():
-        _background_worker_task.cancel()
-        try:
-            await _background_worker_task
-        except asyncio.CancelledError:
-            pass
+    global _background_worker_task, _evidence_watch_task
+    for task_name, task in (
+        ("background", _background_worker_task),
+        ("evidence_watch", _evidence_watch_task),
+    ):
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
     _background_worker_task = None
+    _evidence_watch_task = None
 
 
 async def prewarm_chromadb() -> None:
@@ -167,6 +177,25 @@ async def _ensure_auditor_schema_columns() -> None:
         "ALTER TABLE IF EXISTS evidence_items ADD COLUMN IF NOT EXISTS analysis_confidence VARCHAR(16)",
         "ALTER TABLE IF EXISTS evidence_items ADD COLUMN IF NOT EXISTS analysis_summary TEXT",
         "ALTER TABLE IF EXISTS evidence_items ADD COLUMN IF NOT EXISTS library VARCHAR(16) NOT NULL DEFAULT 'main'",
+        "ALTER TABLE IF EXISTS evidence_items ADD COLUMN IF NOT EXISTS display_name VARCHAR(500)",
+        "ALTER TABLE IF EXISTS evidence_control ADD COLUMN IF NOT EXISTS display_name VARCHAR(500)",
+        (
+            "CREATE TABLE IF NOT EXISTS evidence_corrections ("
+            "id SERIAL PRIMARY KEY,"
+            "timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            "evidence_id INTEGER REFERENCES evidence_items(id) ON DELETE SET NULL,"
+            "control_id INTEGER REFERENCES controls(id),"
+            "field_name VARCHAR(64) NOT NULL,"
+            "before_value TEXT,"
+            "after_value TEXT,"
+            "source VARCHAR(64) NOT NULL DEFAULT 'api',"
+            "operator VARCHAR(100) NOT NULL DEFAULT 'Michael DuPlantis',"
+            "detail TEXT"
+            ")"
+        ),
+        "CREATE INDEX IF NOT EXISTS ix_evidence_corrections_evidence_id ON evidence_corrections (evidence_id)",
+        "CREATE INDEX IF NOT EXISTS ix_evidence_corrections_control_id ON evidence_corrections (control_id)",
+        "ALTER TABLE IF EXISTS evidence_corrections ALTER COLUMN evidence_id DROP NOT NULL",
         "ALTER TABLE IF EXISTS controls ADD COLUMN IF NOT EXISTS description TEXT",
         "ALTER TABLE IF EXISTS controls ADD COLUMN IF NOT EXISTS implementation_guidance TEXT",
         (
@@ -340,6 +369,7 @@ app.include_router(findings.router)
 app.include_router(history.router)
 app.include_router(obligations.router)
 app.include_router(personnel.router)
+app.include_router(workforce.router)
 app.include_router(documents.router)
 app.include_router(reports.router)
 app.include_router(ingest.router)

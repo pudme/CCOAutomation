@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 from models.compliance import (
     Control,
     ControlStatus,
+    EvidenceControlLink,
     EvidenceItem,
     EvidenceRequirement,
     EvidenceStatus,
@@ -41,7 +42,7 @@ async def scan_framework_readiness(session: AsyncSession) -> list[dict]:
         controls_result = await session.execute(
             select(Control)
             .options(
-                selectinload(Control.evidence_items),
+                selectinload(Control.evidence_links).selectinload(EvidenceControlLink.evidence),
                 selectinload(Control.evidence_requirements),
             )
             .where(Control.framework_id == framework.id)
@@ -71,7 +72,7 @@ async def scan_framework_gaps(session: AsyncSession) -> list[dict]:
         controls_result = await session.execute(
             select(Control)
             .options(
-                selectinload(Control.evidence_items),
+                selectinload(Control.evidence_links).selectinload(EvidenceControlLink.evidence),
                 selectinload(Control.evidence_requirements),
             )
             .where(Control.framework_id == framework.id)

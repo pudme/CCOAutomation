@@ -451,6 +451,7 @@ async def _run_evidence_intelligence_with_claude(
             "evidence_type": "other",
             "confidence": "low",
             "summary": "Anthropic API key not configured; evidence intelligence unavailable.",
+            "subject_name": None,
         }
     max_chars_per_chunk = 4000
     text = full_text.strip()
@@ -460,6 +461,7 @@ async def _run_evidence_intelligence_with_claude(
     best_confidence = "low"
     evidence_type_counts: dict[str, int] = {}
     summaries: list[str] = []
+    subject_names: list[str] = []
 
     for chunk_index, chunk_text in enumerate(chunks, start=1):
         prompt = (
@@ -520,7 +522,9 @@ async def _run_evidence_intelligence_with_claude(
             '  "controls": ["A.6.3", "DPA.10", "DPA.1", "HIPAA.AS.2"],\n'
             '  "evidence_type": "policy|record|log|report|attestation|screenshot|config",\n'
             '  "confidence": "high|medium|low",\n'
-            '  "summary": "one sentence describing what this document is"\n'
+            '  "summary": "one sentence describing what this document is",\n'
+            '  "subject_name": "optional person full name when this is clearly about a specific individual '
+            '(attestation, NDA, training record, background check); otherwise null"\n'
             "}\n\n"
             f"Filename: {filename}\n"
             f"Document segment {chunk_index} of {len(chunks)}:\n{chunk_text}"
@@ -580,6 +584,9 @@ async def _run_evidence_intelligence_with_claude(
         summary = str(parsed.get("summary") or "").strip()
         if summary:
             summaries.append(summary)
+        subject = parsed.get("subject_name")
+        if subject is not None and str(subject).strip() and str(subject).strip().lower() not in {"null", "none"}:
+            subject_names.append(str(subject).strip())
         await asyncio.sleep(1)
 
     selected_evidence_type = "other"
@@ -595,6 +602,7 @@ async def _run_evidence_intelligence_with_claude(
         "evidence_type": selected_evidence_type,
         "confidence": best_confidence,
         "summary": merged_summary,
+        "subject_name": subject_names[0] if subject_names else None,
     }
 
 
@@ -1615,13 +1623,17 @@ async def _upsert_evidence_with_controls(
     confidence: str | None = None,
     summary: str | None = None,
     library: str = "main",
-) -> dict[str, int | bool]:
+    subject_name: str | None = None,
+) -> dict[str, int | bool | list]:
+    from models.compliance import EvidenceControlLink
+    from services.evidence_naming import assign_display_names_after_link
+
     matched_controls, unmatched_controls = await _match_controls_from_raw(session, relevant_controls)
     controls = sorted(matched_controls, key=lambda row: row.control_id)
     evidence = (
         await session.execute(
             select(EvidenceItem)
-            .options(selectinload(EvidenceItem.controls))
+            .options(selectinload(EvidenceItem.control_links).selectinload(EvidenceControlLink.control))
             .where(
                 func.lower(EvidenceItem.filename) == filename.strip().lower(),
                 EvidenceItem.library == library,
@@ -1644,7 +1656,12 @@ async def _upsert_evidence_with_controls(
             library=library,
         )
         session.add(evidence)
+        await session.flush()
         created = True
+        # Flush expires relationships; seed an empty collection so append does not lazy-IO.
+        from sqlalchemy.orm.attributes import set_committed_value
+
+        set_committed_value(evidence, "control_links", [])
     else:
         evidence.file_path = minio_path or evidence.file_path
         evidence.evidence_type = evidence_type
@@ -1662,25 +1679,41 @@ async def _upsert_evidence_with_controls(
     if summary:
         evidence.description = summary
 
-    existing_controls = {control.id: control for control in (evidence.controls or [])}
+    if created:
+        existing_by_control_id: dict[int, EvidenceControlLink] = {}
+    else:
+        existing_by_control_id = {link.control_id: link for link in list(evidence.control_links or [])}
     linked_controls = 0
     for control in controls:
-        if control.id not in existing_controls:
+        if control.id not in existing_by_control_id:
+            link = EvidenceControlLink(control_id=control.id, evidence_id=evidence.id)
+            session.add(link)
+            evidence.control_links.append(link)
             linked_controls += 1
-        existing_controls[control.id] = control
-    evidence.controls = list(existing_controls.values())
+            existing_by_control_id[control.id] = link
 
     evidenced_controls = 0
     for control in controls:
         if control.status != ControlStatus.EVIDENCED:
             control.status = ControlStatus.EVIDENCED
         evidenced_controls += 1
+
+    await session.flush()
+    display_names = await assign_display_names_after_link(
+        session,
+        evidence,
+        subject_name=subject_name,
+        summary=summary,
+        library=library,
+    )
     await session.commit()
     return {
         "created": created,
         "linked_controls": linked_controls,
         "evidenced_controls": evidenced_controls,
         "unmatched_controls": len(unmatched_controls),
+        "display_names": display_names,
+        "evidence_id": evidence.id,
     }
 
 
@@ -1741,6 +1774,9 @@ async def _run_evidence_intelligence_pass(
     evidence_type = _map_evidence_type(str(intelligence.get("evidence_type") or ""), detected_type)
     summary = str(intelligence.get("summary") or "").strip()
     confidence = str(intelligence.get("confidence") or "low").strip().lower()
+    subject_name = intelligence.get("subject_name")
+    if subject_name is not None:
+        subject_name = str(subject_name).strip() or None
     upsert_result = await _upsert_evidence_with_controls(
         session,
         filename=record.filename,
@@ -1754,14 +1790,18 @@ async def _run_evidence_intelligence_pass(
         confidence=confidence,
         summary=summary,
         library=record.library or "main",
+        subject_name=subject_name,
     )
     return {
         "controls": normalized_controls,
         "confidence": confidence,
         "summary": summary,
         "evidence_type": evidence_type.value,
+        "subject_name": subject_name,
         "links_created": int(upsert_result["linked_controls"]),
         "unmatched_controls": int(upsert_result["unmatched_controls"]),
+        "display_names": upsert_result.get("display_names") or [],
+        "evidence_id": upsert_result.get("evidence_id"),
     }
 
 
@@ -1772,8 +1812,28 @@ async def run_evidence_intelligence_on_import(
     bypass_limit: bool = False,
     max_chars: int | None = None,
 ) -> dict[str, Any]:
+    from models.compliance import EvidenceControlLink
+    from services.evidence_corrections import snapshot_evidence_state_before_overwrite
+
     if _is_blocked_import_filename(record.filename or ""):
         raise ValueError("Blocked filename for import analysis")
+    existing_evidence = (
+        await session.execute(
+            select(EvidenceItem)
+            .options(selectinload(EvidenceItem.control_links))
+            .where(
+                func.lower(EvidenceItem.filename) == record.filename.strip().lower(),
+                EvidenceItem.library == (record.library or "main"),
+            )
+        )
+    ).scalars().first()
+    if existing_evidence is not None:
+        await snapshot_evidence_state_before_overwrite(
+            session,
+            existing_evidence,
+            source="reanalyze",
+        )
+        await session.commit()
     payload = await _read_import_bytes(record.minio_path)
     full_text = extract_full_text_content(record.filename, payload)
     if not full_text.strip():
@@ -1902,7 +1962,7 @@ async def reanalyze_all_evidence_imports(
             existing_evidence = (
                 await session.execute(
                     select(EvidenceItem)
-                    .options(selectinload(EvidenceItem.controls))
+                    .options(selectinload(EvidenceItem.control_links))
                     .where(func.lower(EvidenceItem.filename) == record.filename.strip().lower())
                 )
             ).scalars().first()

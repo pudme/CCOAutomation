@@ -775,3 +775,165 @@ async def generate_corrective_action_report(session: AsyncSession) -> dict[str, 
         summary=f"Corrective action report generated: {output['download_url']}",
     ))
 
+
+# ---------------------------------------------------------------------------
+# Workforce alignment tools
+# ---------------------------------------------------------------------------
+
+
+async def get_staffing_gaps(
+    session: AsyncSession,
+    pursuit_id: int | None = None,
+    include_canaide: bool = False,
+) -> dict[str, Any]:
+    """Read tool: run gap analysis for one pursuit, or all pursuits if pursuit_id is omitted.
+
+    Defaults to Apprio-only staff. Set include_canaide=True for cross-entity visibility.
+    """
+    from models.workforce import WorkforcePursuit
+    from services.workforce_alignment import analyze_pursuit_gaps
+
+    if pursuit_id is not None:
+        return await analyze_pursuit_gaps(
+            session, pursuit_id, include_canaide=include_canaide
+        )
+
+    pursuits = list((await session.execute(select(WorkforcePursuit))).scalars())
+    results = []
+    for pursuit in pursuits:
+        results.append(
+            await analyze_pursuit_gaps(session, pursuit.id, include_canaide=include_canaide)
+        )
+    return {
+        "pursuit_count": len(results),
+        "total_gaps": sum(int(item.get("gap_count", 0)) for item in results),
+        "include_canaide": include_canaide,
+        "pursuits": results,
+    }
+
+
+async def check_overcommitment(
+    session: AsyncSession,
+    include_canaide: bool = False,
+) -> dict[str, Any]:
+    """Read tool: flag staff whose proposed/committed assignment totals exceed 100%.
+
+    Defaults to Apprio-only staff. Set include_canaide=True for cross-entity visibility.
+    """
+    from services.workforce_alignment import check_overcommitment as run_overcommitment_check
+
+    return await run_overcommitment_check(session, include_canaide=include_canaide)
+
+
+async def flag_staffing_gap(
+    session: AsyncSession,
+    pursuit_id: int,
+    labor_category: str,
+    clearance_required: str | None = None,
+    notes: str | None = None,
+    conversation_id: int | None = None,
+) -> dict[str, Any]:
+    """Write tool: create a WorkforceGap row and log to agent_action_log."""
+    from models.workforce import ClearanceLevel, GapStatus, WorkforceGap, WorkforcePursuit
+
+    pursuit = (
+        await session.execute(select(WorkforcePursuit).where(WorkforcePursuit.id == pursuit_id))
+    ).scalar_one_or_none()
+    if pursuit is None:
+        raise ValueError(f"Pursuit {pursuit_id} not found")
+
+    clearance = ClearanceLevel(clearance_required) if clearance_required else pursuit.required_clearance_level
+    gap = WorkforceGap(
+        pursuit_id=pursuit_id,
+        labor_category=labor_category,
+        clearance_required=clearance,
+        status=GapStatus.OPEN,
+        notes=notes,
+    )
+    session.add(gap)
+    await session.flush()
+    await _log_write(
+        session,
+        "flag_staffing_gap",
+        {
+            "pursuit_id": pursuit_id,
+            "labor_category": labor_category,
+            "clearance_required": clearance.value if clearance else None,
+            "notes": notes,
+        },
+        f"Flagged staffing gap id={gap.id} for pursuit {pursuit_id}: {labor_category}",
+        conversation_id,
+    )
+    await session.commit()
+    await session.refresh(gap)
+    return {
+        "id": gap.id,
+        "pursuit_id": gap.pursuit_id,
+        "labor_category": gap.labor_category,
+        "clearance_required": gap.clearance_required.value if gap.clearance_required else None,
+        "status": gap.status.value,
+        "notes": gap.notes,
+    }
+
+
+async def assign_staff(
+    session: AsyncSession,
+    staff_id: int,
+    pursuit_id: int,
+    role: str | None = None,
+    commitment_pct: float = 100.0,
+    status: str = "proposed",
+    conversation_id: int | None = None,
+) -> dict[str, Any]:
+    """Write tool: create a WorkforceAssignment and log to agent_action_log."""
+    from models.workforce import (
+        AssignmentStatus,
+        WorkforceAssignment,
+        WorkforcePursuit,
+        WorkforceStaff,
+    )
+
+    staff = (
+        await session.execute(select(WorkforceStaff).where(WorkforceStaff.id == staff_id))
+    ).scalar_one_or_none()
+    if staff is None:
+        raise ValueError(f"Staff {staff_id} not found")
+    pursuit = (
+        await session.execute(select(WorkforcePursuit).where(WorkforcePursuit.id == pursuit_id))
+    ).scalar_one_or_none()
+    if pursuit is None:
+        raise ValueError(f"Pursuit {pursuit_id} not found")
+
+    assignment = WorkforceAssignment(
+        staff_id=staff_id,
+        pursuit_id=pursuit_id,
+        role=role,
+        commitment_pct=commitment_pct,
+        status=AssignmentStatus(status),
+    )
+    session.add(assignment)
+    await session.flush()
+    await _log_write(
+        session,
+        "assign_staff",
+        {
+            "staff_id": staff_id,
+            "pursuit_id": pursuit_id,
+            "role": role,
+            "commitment_pct": commitment_pct,
+            "status": status,
+        },
+        f"Assigned staff {staff_id} to pursuit {pursuit_id} at {commitment_pct}% ({status})",
+        conversation_id,
+    )
+    await session.commit()
+    await session.refresh(assignment)
+    return {
+        "id": assignment.id,
+        "staff_id": assignment.staff_id,
+        "pursuit_id": assignment.pursuit_id,
+        "role": assignment.role,
+        "commitment_pct": assignment.commitment_pct,
+        "status": assignment.status.value,
+    }
+

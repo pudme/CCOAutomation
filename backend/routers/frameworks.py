@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from database import get_db
-from models.compliance import Control, Framework
+from models.compliance import Control, EvidenceControlLink, Framework
 from services.readiness_mode import get_framework_readiness_with_mode
 
 router = APIRouter(prefix="/frameworks", tags=["frameworks"])
@@ -101,7 +101,10 @@ async def framework_controls(
         raise HTTPException(status_code=404, detail="Framework not found")
     stmt = (
         select(Control)
-        .options(selectinload(Control.evidence_items), selectinload(Control.evidence_requirements))
+        .options(
+            selectinload(Control.evidence_links).selectinload(EvidenceControlLink.evidence),
+            selectinload(Control.evidence_requirements),
+        )
         .where(Control.framework_id == framework.id)
         .order_by(Control.control_id.asc())
     )

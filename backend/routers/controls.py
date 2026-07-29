@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from database import get_db
-from models.compliance import Control, ControlStatus
+from models.compliance import Control, ControlStatus, EvidenceControlLink
 
 router = APIRouter(prefix="/controls", tags=["controls"])
 
@@ -24,7 +24,7 @@ async def get_control(control_id: str, session: AsyncSession = Depends(get_db)) 
         await session.execute(
             select(Control)
             .options(
-                selectinload(Control.evidence_items),
+                selectinload(Control.evidence_links).selectinload(EvidenceControlLink.evidence),
                 selectinload(Control.evidence_requirements),
                 selectinload(Control.findings),
                 selectinload(Control.mapped_to),

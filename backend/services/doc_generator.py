@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from config import get_settings
-from models.compliance import Control, EvidenceItem, Finding, FindingStatus, Framework, Obligation
+from models.compliance import Control, EvidenceControlLink, EvidenceItem, Finding, FindingStatus, Framework, Obligation
 from services.gap_scanner import scan_framework_readiness
 
 settings = get_settings()
@@ -68,7 +68,10 @@ async def generate_gap_report(framework_short_name: str, session: AsyncSession) 
 
     controls_result = await session.execute(
         select(Control)
-        .options(selectinload(Control.evidence_items), selectinload(Control.evidence_requirements))
+        .options(
+            selectinload(Control.evidence_links).selectinload(EvidenceControlLink.evidence),
+            selectinload(Control.evidence_requirements),
+        )
         .where(Control.framework_id == framework.id)
     )
     controls = list(controls_result.scalars())
@@ -208,7 +211,9 @@ async def generate_audit_package_index(framework_short_name: str, session: Async
         raise ValueError("Framework not found")
 
     controls_result = await session.execute(
-        select(Control).options(selectinload(Control.evidence_items)).where(Control.framework_id == framework.id)
+        select(Control)
+        .options(selectinload(Control.evidence_links).selectinload(EvidenceControlLink.evidence))
+        .where(Control.framework_id == framework.id)
     )
     controls = list(controls_result.scalars())
     doc = _doc_with_header()

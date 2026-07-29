@@ -23,7 +23,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 async def init_db() -> None:
     # Import models so SQLAlchemy can register metadata before create_all.
-    from models import auditor, compliance, personnel  # noqa: F401
+    from models import auditor, compliance, personnel, workforce  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

@@ -22,6 +22,7 @@ from models.compliance import (
     Conversation,
     CorrectiveAction,
     DataImport,
+    EvidenceControlLink,
     EvidenceItem,
     EvidenceRequirement,
     EvidenceStatus,
@@ -35,7 +36,6 @@ from models.compliance import (
     Obligation,
     ObligationStatus,
     PersonnelRecord,
-    evidence_control_association,
     finding_control_association,
 )
 from models.auditor import AuditorChecklist, AuditorChecklistItem
@@ -213,7 +213,7 @@ def reset_db_cmd(confirmation: str) -> None:
             ("Conversation", Conversation),
             ("CorrectiveAction", CorrectiveAction),
             ("Finding", Finding),
-            ("evidence_control", evidence_control_association),
+            ("evidence_control", EvidenceControlLink),
             ("finding_control", finding_control_association),
             ("EvidenceItem", EvidenceItem),
             ("EvidenceRequirement", EvidenceRequirement),
@@ -273,7 +273,9 @@ def seed_demo_cmd() -> None:
         async with AsyncSessionLocal() as session:
             result = await session.execute(
                 select(Control)
-                .options(selectinload(Control.evidence_items))
+                .options(
+                    selectinload(Control.evidence_links).selectinload(EvidenceControlLink.evidence)
+                )
                 .where(
                     Control.control_id.in_(
                         evidenced_controls + in_progress_controls + missing_controls
@@ -425,8 +427,8 @@ def clear_documents_cmd(confirmation: str) -> None:
 
             if evidence_ids:
                 await session.execute(
-                    delete(evidence_control_association).where(
-                        evidence_control_association.c.evidence_id.in_(evidence_ids)
+                    delete(EvidenceControlLink).where(
+                        EvidenceControlLink.evidence_id.in_(evidence_ids)
                     )
                 )
 

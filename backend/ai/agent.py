@@ -44,6 +44,10 @@ TOOL_REGISTRY: dict[str, ToolFn] = {
     "generate_scorecard": agent_tools.generate_scorecard,
     "generate_audit_package": agent_tools.generate_audit_package,
     "generate_corrective_action_report": agent_tools.generate_corrective_action_report,
+    "get_staffing_gaps": agent_tools.get_staffing_gaps,
+    "check_overcommitment": agent_tools.check_overcommitment,
+    "flag_staffing_gap": agent_tools.flag_staffing_gap,
+    "assign_staff": agent_tools.assign_staff,
 }
 
 
@@ -74,6 +78,64 @@ ANTHROPIC_TOOL_SCHEMAS: list[dict[str, Any]] = [
     {"name": "generate_scorecard", "description": "Generate management scorecard", "input_schema": {"type": "object", "properties": {}}},
     {"name": "generate_audit_package", "description": "Generate audit package", "input_schema": {"type": "object", "properties": {"framework": {"type": "string"}}, "required": ["framework"]}},
     {"name": "generate_corrective_action_report", "description": "Generate corrective action report", "input_schema": {"type": "object", "properties": {}}},
+    {
+        "name": "get_staffing_gaps",
+        "description": "Run workforce gap analysis for a pursuit (or all pursuits). Matches required labor categories and clearance against Apprio staff with utilization under 80%. Defaults to Apprio-only; set include_canaide=true to include Canaide/other entities.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pursuit_id": {"type": ["integer", "null"], "description": "Optional pursuit id; omit to analyze all pursuits"},
+                "include_canaide": {
+                    "type": "boolean",
+                    "description": "If true, include non-Apprio entities (e.g. Canaide). Default false (Apprio-only).",
+                    "default": False,
+                },
+            },
+        },
+    },
+    {
+        "name": "check_overcommitment",
+        "description": "Check workforce staffing overcommitment. Sums proposed/committed assignment commitment_pct per staff and flags totals over 100%. Defaults to Apprio-only; set include_canaide=true for cross-entity.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "include_canaide": {
+                    "type": "boolean",
+                    "description": "If true, include non-Apprio entities (e.g. Canaide). Default false (Apprio-only).",
+                    "default": False,
+                },
+            },
+        },
+    },
+    {
+        "name": "flag_staffing_gap",
+        "description": "Create a staffing gap record for a pursuit labor category",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pursuit_id": {"type": "integer"},
+                "labor_category": {"type": "string"},
+                "clearance_required": {"type": ["string", "null"]},
+                "notes": {"type": ["string", "null"]},
+            },
+            "required": ["pursuit_id", "labor_category"],
+        },
+    },
+    {
+        "name": "assign_staff",
+        "description": "Assign a workforce staff member to a pursuit with a commitment percentage",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "staff_id": {"type": "integer"},
+                "pursuit_id": {"type": "integer"},
+                "role": {"type": ["string", "null"]},
+                "commitment_pct": {"type": "number"},
+                "status": {"type": "string"},
+            },
+            "required": ["staff_id", "pursuit_id"],
+        },
+    },
 ]
 
 

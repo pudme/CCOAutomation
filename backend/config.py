@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     app_env: str = Field(default="development", alias="APP_ENV")
     audit_date: str = Field(default="2026-05-15", alias="AUDIT_DATE")
 
+    # Local evidence drop watcher (bind-mounted folder)
+    evidence_watch_path: str = Field(default="/app/evidence-drop", alias="EVIDENCE_WATCH_PATH")
+    evidence_watch_interval_seconds: int = Field(default=60, alias="EVIDENCE_WATCH_INTERVAL_SECONDS")
+    evidence_watch_library: str = Field(default="main", alias="EVIDENCE_WATCH_LIBRARY")
+    evidence_watch_enabled: bool = Field(default=True, alias="EVIDENCE_WATCH_ENABLED")
+
     @field_validator("database_url", mode="before")
     @classmethod
     def normalize_database_url(cls, value: str) -> str:

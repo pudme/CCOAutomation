@@ -20,7 +20,7 @@ from models.compliance import AppSetting
 _settings = get_settings()
 _client = AsyncAnthropic(api_key=_settings.anthropic_api_key)
 
-MODEL_SONNET = "claude-sonnet-4-20250514"
+MODEL_SONNET = "claude-sonnet-4-5-20250929"
 MODEL_HAIKU = "claude-haiku-4-5-20251001"
 
 # Approximate costs per call (USD)

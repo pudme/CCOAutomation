@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -84,14 +85,6 @@ class ImportStatus(str, enum.Enum):
     FAILED = "failed"
 
 
-evidence_control_association = Table(
-    "evidence_control",
-    Base.metadata,
-    Column("evidence_id", ForeignKey("evidence_items.id"), primary_key=True),
-    Column("control_id", ForeignKey("controls.id"), primary_key=True),
-)
-
-
 finding_control_association = Table(
     "finding_control",
     Base.metadata,
@@ -106,6 +99,23 @@ control_mappings_association = Table(
     Column("control_id", ForeignKey("controls.id"), primary_key=True),
     Column("mapped_control_id", ForeignKey("controls.id"), primary_key=True),
 )
+
+
+class EvidenceControlLink(Base):
+    """Association object for evidence ↔ control with per-control display_name."""
+
+    __tablename__ = "evidence_control"
+
+    evidence_id: Mapped[int] = mapped_column(
+        ForeignKey("evidence_items.id", ondelete="CASCADE"), primary_key=True
+    )
+    control_id: Mapped[int] = mapped_column(
+        ForeignKey("controls.id", ondelete="CASCADE"), primary_key=True
+    )
+    display_name: Mapped[str | None] = mapped_column(String(500))
+
+    evidence: Mapped["EvidenceItem"] = relationship(back_populates="control_links")
+    control: Mapped["Control"] = relationship(back_populates="evidence_links")
 
 
 class Framework(Base):
@@ -144,8 +154,13 @@ class Control(Base):
     evidence_requirements: Mapped[list[EvidenceRequirement]] = relationship(
         back_populates="control", cascade="all, delete-orphan"
     )
-    evidence_items: Mapped[list[EvidenceItem]] = relationship(
-        secondary=evidence_control_association, back_populates="controls"
+    evidence_links: Mapped[list[EvidenceControlLink]] = relationship(
+        back_populates="control", cascade="all, delete-orphan"
+    )
+    evidence_items = association_proxy(
+        "evidence_links",
+        "evidence",
+        creator=lambda evidence: EvidenceControlLink(evidence=evidence),
     )
     findings: Mapped[list[Finding]] = relationship(
         secondary=finding_control_association, back_populates="controls"
@@ -175,6 +190,8 @@ class EvidenceItem(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     filename: Mapped[str] = mapped_column(String(300), nullable=False)
+    # Optional AI-generated display name when no control links exist (filename stays original for DataImport match).
+    display_name: Mapped[str | None] = mapped_column(String(500))
     file_path: Mapped[str | None] = mapped_column(String(500))
     evidence_type: Mapped[EvidenceType] = mapped_column(Enum(EvidenceType), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
@@ -187,8 +204,36 @@ class EvidenceItem(Base):
     analysis_summary: Mapped[str | None] = mapped_column(Text)
     library: Mapped[str] = mapped_column(String(16), default="main", nullable=False)
 
-    controls: Mapped[list[Control]] = relationship(secondary=evidence_control_association, back_populates="evidence_items")
+    control_links: Mapped[list[EvidenceControlLink]] = relationship(
+        back_populates="evidence", cascade="all, delete-orphan"
+    )
+    controls = association_proxy(
+        "control_links",
+        "control",
+        creator=lambda control: EvidenceControlLink(control=control),
+    )
 
+
+class EvidenceCorrection(Base):
+    """Append-only snapshot of human (or reanalyze) corrections to evidence classification/naming.
+
+    Never deleted — same audit rule as agent_action_log.
+    """
+
+    __tablename__ = "evidence_corrections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    evidence_id: Mapped[int | None] = mapped_column(
+        ForeignKey("evidence_items.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    control_id: Mapped[int | None] = mapped_column(ForeignKey("controls.id"), nullable=True, index=True)
+    field_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    before_value: Mapped[str | None] = mapped_column(Text)
+    after_value: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(64), nullable=False, default="api")
+    operator: Mapped[str] = mapped_column(String(100), default="Michael DuPlantis", nullable=False)
+    detail: Mapped[str | None] = mapped_column(Text)
 
 class Finding(Base):
     __tablename__ = "findings"
