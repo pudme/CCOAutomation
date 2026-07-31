@@ -22,6 +22,10 @@ AUDIT_DATE_ISO_KEY = "audit_date_iso"
 AUDIT_DATE_CMMC_KEY = "audit_date_cmmc"
 AUDIT_DATE_DPA_KEY = "audit_date_dpa"
 AUDIT_DATE_ATO_KEY = "audit_date_ato"
+AUDIT_ENABLED_ISO_KEY = "audit_enabled_iso"
+AUDIT_ENABLED_CMMC_KEY = "audit_enabled_cmmc"
+AUDIT_ENABLED_DPA_KEY = "audit_enabled_dpa"
+AUDIT_ENABLED_ATO_KEY = "audit_enabled_ato"
 DEFAULT_AUDIT_DATE_ISO = "2026-05-15"
 DEFAULT_AUDIT_DATE_CMMC = "2026-09-01"
 DEFAULT_API_DAILY_LIMIT = "200"
@@ -32,22 +36,45 @@ CMMC_FRAMEWORKS = sorted(name for name in _CMMC if name != "cmmc")
 DPA_FRAMEWORKS = sorted(_DPA)
 ATO_FRAMEWORKS = sorted(_ATO)
 
+AUDIT_KEYS = ("iso", "cmmc", "dpa", "ato")
+AUDIT_ENABLED_KEYS = {
+    "iso": AUDIT_ENABLED_ISO_KEY,
+    "cmmc": AUDIT_ENABLED_CMMC_KEY,
+    "dpa": AUDIT_ENABLED_DPA_KEY,
+    "ato": AUDIT_ENABLED_ATO_KEY,
+}
+AUDIT_LABELS = {
+    "iso": "ISO Surveillance Audit",
+    "cmmc": "CMMC Level 2 Assessment",
+    "dpa": "DPA Follow-up Review",
+    "ato": "ATO Readiness",
+}
+
 
 def _today() -> date:
     return datetime.utcnow().date()
+
+
+def _parse_bool_setting(value: str | None, *, default: bool = True) -> bool:
+    if value is None or not str(value).strip():
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _build_audit_entry(
     audit_date: str | None,
     label: str,
     frameworks: list[str],
-) -> dict[str, str | int | list[str] | None]:
+    *,
+    enabled: bool = True,
+) -> dict[str, str | int | list[str] | bool | None]:
     if not audit_date:
         return {
             "audit_date": None,
             "days_remaining": None,
             "label": label,
             "frameworks": frameworks,
+            "enabled": enabled,
         }
     parsed = datetime.strptime(audit_date, "%Y-%m-%d").date()
     return {
@@ -55,6 +82,7 @@ def _build_audit_entry(
         "days_remaining": (parsed - _today()).days,
         "label": label,
         "frameworks": frameworks,
+        "enabled": enabled,
     }
 
 
@@ -76,6 +104,35 @@ async def _resolve_audit_dates(session: AsyncSession) -> tuple[str, str, str | N
     dpa_date = dpa_setting.value.strip() if dpa_setting and dpa_setting.value else None
     ato_date = ato_setting.value.strip() if ato_setting and ato_setting.value else None
     return iso_date, cmmc_date, dpa_date, ato_date
+
+
+async def _resolve_audit_enabled(session: AsyncSession) -> dict[str, bool]:
+    enabled: dict[str, bool] = {}
+    for key, setting_key in AUDIT_ENABLED_KEYS.items():
+        row = (
+            await session.execute(select(AppSetting).where(AppSetting.key == setting_key))
+        ).scalar_one_or_none()
+        enabled[key] = _parse_bool_setting(row.value if row else None, default=True)
+    return enabled
+
+
+async def _build_audit_info_payload(session: AsyncSession) -> dict:
+    iso_date, cmmc_date, dpa_date, ato_date = await _resolve_audit_dates(session)
+    enabled = await _resolve_audit_enabled(session)
+    return {
+        "iso": _build_audit_entry(
+            iso_date, AUDIT_LABELS["iso"], ISO_FRAMEWORKS, enabled=enabled["iso"]
+        ),
+        "cmmc": _build_audit_entry(
+            cmmc_date, AUDIT_LABELS["cmmc"], CMMC_FRAMEWORKS, enabled=enabled["cmmc"]
+        ),
+        "dpa": _build_audit_entry(
+            dpa_date, AUDIT_LABELS["dpa"], DPA_FRAMEWORKS, enabled=enabled["dpa"]
+        ),
+        "ato": _build_audit_entry(
+            ato_date, AUDIT_LABELS["ato"], ATO_FRAMEWORKS, enabled=enabled["ato"]
+        ),
+    }
 
 
 async def seed_audit_date_settings(session: AsyncSession) -> None:
@@ -108,6 +165,12 @@ async def seed_audit_date_settings(session: AsyncSession) -> None:
     if existing_ato is None:
         existing_ato = AppSetting(key=AUDIT_DATE_ATO_KEY, value="", updated_at=now)
         session.add(existing_ato)
+    for setting_key in AUDIT_ENABLED_KEYS.values():
+        existing_enabled = (
+            await session.execute(select(AppSetting).where(AppSetting.key == setting_key))
+        ).scalar_one_or_none()
+        if existing_enabled is None:
+            session.add(AppSetting(key=setting_key, value="true", updated_at=now))
     if legacy is not None:
         await session.delete(legacy)
 
@@ -143,13 +206,7 @@ async def seed_api_usage_settings(session: AsyncSession) -> None:
 
 @router.get("/audit-info")
 async def get_audit_info(session: AsyncSession = Depends(get_db)) -> dict:
-    iso_date, cmmc_date, dpa_date, ato_date = await _resolve_audit_dates(session)
-    return {
-        "iso": _build_audit_entry(iso_date, "ISO Surveillance Audit", ISO_FRAMEWORKS),
-        "cmmc": _build_audit_entry(cmmc_date, "CMMC Level 2 Assessment", CMMC_FRAMEWORKS),
-        "dpa": _build_audit_entry(dpa_date, "DPA Follow-up Review", DPA_FRAMEWORKS),
-        "ato": _build_audit_entry(ato_date, "ATO Readiness", ATO_FRAMEWORKS),
-    }
+    return await _build_audit_info_payload(session)
 
 
 class AuditDatesPatch(BaseModel):
@@ -157,6 +214,11 @@ class AuditDatesPatch(BaseModel):
     cmmc_audit_date: str
     dpa_audit_date: str | None = None
     ato_audit_date: str | None = None
+
+
+class AuditEnabledPatch(BaseModel):
+    audit: str
+    enabled: bool
 
 
 class ApiLimitPatch(BaseModel):
@@ -252,12 +314,42 @@ async def patch_audit_dates(
         ),
     )
     await session.commit()
-    return {
-        "iso": _build_audit_entry(existing_iso.value, "ISO Surveillance Audit", ISO_FRAMEWORKS),
-        "cmmc": _build_audit_entry(existing_cmmc.value, "CMMC Level 2 Assessment", CMMC_FRAMEWORKS),
-        "dpa": _build_audit_entry(existing_dpa.value if existing_dpa else None, "DPA Follow-up Review", DPA_FRAMEWORKS),
-        "ato": _build_audit_entry(existing_ato.value if existing_ato else None, "ATO Readiness", ATO_FRAMEWORKS),
-    }
+    return await _build_audit_info_payload(session)
+
+
+@router.patch("/audit-enabled")
+async def patch_audit_enabled(
+    payload: AuditEnabledPatch,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    audit_key = (payload.audit or "").strip().lower()
+    if audit_key not in AUDIT_ENABLED_KEYS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"audit must be one of: {', '.join(AUDIT_KEYS)}",
+        )
+    setting_key = AUDIT_ENABLED_KEYS[audit_key]
+    now = datetime.utcnow().isoformat()
+    value = "true" if payload.enabled else "false"
+    row = (
+        await session.execute(select(AppSetting).where(AppSetting.key == setting_key))
+    ).scalar_one_or_none()
+    if row is None:
+        row = AppSetting(key=setting_key, value=value, updated_at=now)
+        session.add(row)
+    else:
+        row.value = value
+        row.updated_at = now
+    await session.commit()
+    await log_change(
+        session,
+        category="settings",
+        action="Setting updated",
+        subject=setting_key,
+        detail=f"Setting {setting_key} updated to {value}",
+    )
+    await session.commit()
+    return await _build_audit_info_payload(session)
 
 
 @router.get("/all")

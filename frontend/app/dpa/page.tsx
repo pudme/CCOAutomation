@@ -74,9 +74,12 @@ export default function DpaOverviewPage() {
               <p>Open obligations: {openObligations}</p>
               <p>
                 Days until next review period:{" "}
-                {auditInfo?.dpa?.days_remaining === null || auditInfo?.dpa?.days_remaining === undefined
-                  ? "Not configured"
-                  : Math.max(0, auditInfo.dpa.days_remaining)}
+                {auditInfo?.dpa?.enabled === false
+                  ? "Tracking disabled"
+                  : auditInfo?.dpa?.days_remaining === null ||
+                      auditInfo?.dpa?.days_remaining === undefined
+                    ? "Not configured"
+                    : Math.max(0, auditInfo.dpa.days_remaining)}
               </p>
             </div>
           </div>

@@ -31,6 +31,24 @@ export function Sidebar() {
   const pathname = usePathname();
   const { auditInfo } = useAuditInfo();
 
+  const countdownParts: string[] = [];
+  if (auditInfo) {
+    const entries = [
+      { short: "ISO", entry: auditInfo.iso },
+      { short: "CMMC", entry: auditInfo.cmmc },
+      { short: "DPA", entry: auditInfo.dpa },
+      { short: "ATO", entry: auditInfo.ato },
+    ] as const;
+    for (const item of entries) {
+      if (item.entry.enabled === false) continue;
+      const days =
+        item.entry.days_remaining === null || item.entry.days_remaining === undefined
+          ? "--"
+          : String(Math.max(0, item.entry.days_remaining));
+      countdownParts.push(`${item.short}: ${days}`);
+    }
+  }
+
   return (
     <aside className="sticky top-0 flex h-screen w-64 shrink-0 flex-col overflow-y-auto border-r bg-card p-4">
       <div className="mb-6">
@@ -39,10 +57,7 @@ export function Sidebar() {
       </div>
       <div className="mb-4">
         <Badge variant="secondary">
-          ISO: {auditInfo ? Math.max(0, auditInfo.iso.days_remaining) : "--"} · CMMC:{" "}
-          {auditInfo ? Math.max(0, auditInfo.cmmc.days_remaining) : "--"} · DPA:{" "}
-          {auditInfo && auditInfo.dpa.days_remaining !== null ? Math.max(0, auditInfo.dpa.days_remaining) : "--"}
-          {auditInfo && auditInfo.ato.days_remaining !== null ? ` · ATO: ${Math.max(0, auditInfo.ato.days_remaining)}` : ""}
+          {countdownParts.length > 0 ? countdownParts.join(" · ") : "No audits tracked"}
         </Badge>
       </div>
       <nav className="space-y-1">

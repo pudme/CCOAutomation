@@ -504,32 +504,24 @@ export async function searchDocuments(query: string): Promise<any[]> {
   return readJson<any[]>("/documents/search", { method: "POST", body: JSON.stringify({ query }) });
 }
 
-export async function getAuditInfo(): Promise<{
-  iso: {
-    audit_date: string;
-    days_remaining: number;
-    label: string;
-    frameworks: string[];
-  };
-  cmmc: {
-    audit_date: string;
-    days_remaining: number;
-    label: string;
-    frameworks: string[];
-  };
-  dpa: {
-    audit_date: string | null;
-    days_remaining: number | null;
-    label: string;
-    frameworks: string[];
-  };
-  ato: {
-    audit_date: string | null;
-    days_remaining: number | null;
-    label: string;
-    frameworks: string[];
-  };
-}> {
+export type AuditProgramKey = "iso" | "cmmc" | "dpa" | "ato";
+
+export type AuditProgramInfo = {
+  audit_date: string | null;
+  days_remaining: number | null;
+  label: string;
+  frameworks: string[];
+  enabled: boolean;
+};
+
+export type AuditInfoPayload = {
+  iso: AuditProgramInfo;
+  cmmc: AuditProgramInfo;
+  dpa: AuditProgramInfo;
+  ato: AuditProgramInfo;
+};
+
+export async function getAuditInfo(): Promise<AuditInfoPayload> {
   return readJson("/settings/audit-info");
 }
 
@@ -538,33 +530,18 @@ export async function patchAuditDates(payload: {
   cmmc_audit_date: string;
   dpa_audit_date?: string | null;
   ato_audit_date?: string | null;
-}): Promise<{
-  iso: {
-    audit_date: string;
-    days_remaining: number;
-    label: string;
-    frameworks: string[];
-  };
-  cmmc: {
-    audit_date: string;
-    days_remaining: number;
-    label: string;
-    frameworks: string[];
-  };
-  dpa: {
-    audit_date: string | null;
-    days_remaining: number | null;
-    label: string;
-    frameworks: string[];
-  };
-  ato: {
-    audit_date: string | null;
-    days_remaining: number | null;
-    label: string;
-    frameworks: string[];
-  };
-}> {
+}): Promise<AuditInfoPayload> {
   return readJson("/settings/audit-dates", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function patchAuditEnabled(payload: {
+  audit: AuditProgramKey;
+  enabled: boolean;
+}): Promise<AuditInfoPayload> {
+  return readJson("/settings/audit-enabled", {
     method: "PATCH",
     body: JSON.stringify(payload),
   });

@@ -14,6 +14,8 @@ import {
   patchApiEnabled,
   patchApiLimit,
   patchAuditDates,
+  patchAuditEnabled,
+  type AuditProgramKey,
 } from "@/lib/api";
 import { armOneTimeBatchBypass } from "@/lib/api-limit-override";
 import { useApiUsage, useAsyncAction, useAuditInfo } from "@/lib/hooks";
@@ -28,6 +30,7 @@ export default function SettingsPage() {
   const [atoDraft, setAtoDraft] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [togglingKey, setTogglingKey] = useState<AuditProgramKey | null>(null);
   const [apiStatus, setApiStatus] = useState<string | null>(null);
   const [dailyLimitDraft, setDailyLimitDraft] = useState<number>(usage?.daily_limit ?? 200);
   const [showOverrideDialog, setShowOverrideDialog] = useState(false);
@@ -36,6 +39,7 @@ export default function SettingsPage() {
   const [optimisticEnabled, setOptimisticEnabled] = useState<boolean | null>(null);
   const saveAction = useAsyncAction();
   const apiAction = useAsyncAction();
+  const trackAction = useAsyncAction();
 
   const rows = auditInfo
     ? [
@@ -45,6 +49,7 @@ export default function SettingsPage() {
           frameworks: "ISO 27001, ISO 20000, ISO 9001",
           auditDate: auditInfo.iso.audit_date,
           daysRemaining: auditInfo.iso.days_remaining,
+          enabled: auditInfo.iso.enabled !== false,
         },
         {
           key: "cmmc" as const,
@@ -52,6 +57,7 @@ export default function SettingsPage() {
           frameworks: "CMMC Level 2",
           auditDate: auditInfo.cmmc.audit_date,
           daysRemaining: auditInfo.cmmc.days_remaining,
+          enabled: auditInfo.cmmc.enabled !== false,
         },
         {
           key: "dpa" as const,
@@ -59,6 +65,7 @@ export default function SettingsPage() {
           frameworks: "Attachment C",
           auditDate: auditInfo.dpa.audit_date || "",
           daysRemaining: auditInfo.dpa.days_remaining,
+          enabled: auditInfo.dpa.enabled !== false,
         },
         {
           key: "ato" as const,
@@ -66,6 +73,7 @@ export default function SettingsPage() {
           frameworks: "NIST 800-53 Moderate",
           auditDate: auditInfo.ato.audit_date || "",
           daysRemaining: auditInfo.ato.days_remaining,
+          enabled: auditInfo.ato.enabled !== false,
         },
       ]
     : [];
@@ -88,20 +96,26 @@ export default function SettingsPage() {
         ) : (
           <div className="mt-3 space-y-3">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[720px] border text-sm">
+              <table className="w-full min-w-[820px] border text-sm">
                 <thead className="bg-muted/40 text-left">
                   <tr>
                     <th className="border px-3 py-2">Audit</th>
                     <th className="border px-3 py-2">Frameworks Covered</th>
                     <th className="border px-3 py-2">Date</th>
                     <th className="border px-3 py-2">Days Remaining</th>
+                    <th className="border px-3 py-2">Tracking</th>
                     <th className="border px-3 py-2">Edit</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((row) => (
-                    <tr key={row.key}>
-                      <td className="border px-3 py-2 font-medium">{row.auditName}</td>
+                    <tr key={row.key} className={row.enabled ? undefined : "bg-muted/30 text-muted-foreground"}>
+                      <td className="border px-3 py-2 font-medium">
+                        {row.auditName}
+                        {!row.enabled ? (
+                          <span className="ml-2 text-xs font-normal uppercase tracking-wide">Disabled</span>
+                        ) : null}
+                      </td>
                       <td className="border px-3 py-2">{row.frameworks}</td>
                       <td className="border px-3 py-2">
                         {editing === row.key ? (
@@ -130,11 +144,44 @@ export default function SettingsPage() {
                             }}
                           />
                         ) : (
-                          row.auditDate
+                          row.auditDate || "--"
                         )}
                       </td>
                       <td className="border px-3 py-2">
                         {row.auditDate && row.daysRemaining !== null ? Math.max(0, row.daysRemaining) : "--"}
+                      </td>
+                      <td className="border px-3 py-2">
+                        <Button
+                          size="sm"
+                          variant={row.enabled ? "outline" : "default"}
+                          disabled={togglingKey === row.key}
+                          onClick={async () => {
+                            setTogglingKey(row.key);
+                            setStatus(null);
+                            await trackAction.execute(
+                              async () => {
+                                await patchAuditEnabled({ audit: row.key, enabled: !row.enabled });
+                                await refresh();
+                                setStatus(
+                                  row.enabled
+                                    ? `${row.auditName} disabled. Dates are kept and can be re-enabled later.`
+                                    : `${row.auditName} enabled.`,
+                                );
+                              },
+                              {
+                                loadingMessage: row.enabled ? "Disabling audit..." : "Enabling audit...",
+                                successMessage: row.enabled ? "Audit disabled." : "Audit enabled.",
+                                errorMessage: "Failed to update audit tracking.",
+                              },
+                            );
+                            setTogglingKey(null);
+                          }}
+                        >
+                          <span className="flex items-center gap-2">
+                            {togglingKey === row.key ? <ButtonSpinner /> : null}
+                            {row.enabled ? "Disable" : "Enable"}
+                          </span>
+                        </Button>
                       </td>
                       <td className="border px-3 py-2">
                         {editing === row.key ? (
@@ -180,8 +227,8 @@ export default function SettingsPage() {
                             size="sm"
                             variant="outline"
                             onClick={() => {
-                              setIsoDraft(auditInfo.iso.audit_date);
-                              setCmmcDraft(auditInfo.cmmc.audit_date);
+                              setIsoDraft(auditInfo.iso.audit_date || "");
+                              setCmmcDraft(auditInfo.cmmc.audit_date || "");
                               setDpaDraft(auditInfo.dpa.audit_date || "");
                               setAtoDraft(auditInfo.ato.audit_date || "");
                               setEditing(row.key);
@@ -197,6 +244,9 @@ export default function SettingsPage() {
                 </tbody>
               </table>
             </div>
+            <p className="text-xs text-muted-foreground">
+              Disable keeps the audit date for later. Disabled audits are hidden from the countdown banner and dashboard.
+            </p>
             {status ? <p className="text-sm text-muted-foreground">{status}</p> : null}
           </div>
         )}

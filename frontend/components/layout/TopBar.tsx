@@ -28,14 +28,31 @@ export function TopBar() {
   const analysisIsAnalyzing = useAnalysisProgressStore((state) => state.isAnalyzing);
   const analysisCompleted = useAnalysisProgressStore((state) => state.completed);
   const analysisTotal = useAnalysisProgressStore((state) => state.total);
+
+  const countdownParts: string[] = [];
+  if (auditInfo) {
+    const entries = [
+      { key: "iso", short: "ISO Audit", entry: auditInfo.iso },
+      { key: "cmmc", short: "CMMC", entry: auditInfo.cmmc },
+      { key: "dpa", short: "DPA Review", entry: auditInfo.dpa },
+      { key: "ato", short: "ATO", entry: auditInfo.ato },
+    ] as const;
+    for (const item of entries) {
+      if (item.entry.enabled === false) continue;
+      const days =
+        item.entry.days_remaining === null || item.entry.days_remaining === undefined
+          ? "--"
+          : String(Math.max(item.entry.days_remaining, 0));
+      countdownParts.push(`${item.short}: ${days} days`);
+    }
+  }
+
   return (
     <header className="min-w-0 border-b bg-background px-6 py-4">
       <div className="flex items-center justify-between gap-4">
         <h2 className="text-xl font-semibold">{getTitle(pathname)}</h2>
         <div className="shrink-0 whitespace-nowrap rounded border bg-muted/40 px-3 py-1 text-sm text-muted-foreground">
-          {auditInfo
-            ? `ISO Audit: ${Math.max(auditInfo.iso.days_remaining, 0)} days · CMMC: ${Math.max(auditInfo.cmmc.days_remaining, 0)} days · DPA Review: ${auditInfo.dpa.days_remaining === null ? "--" : Math.max(auditInfo.dpa.days_remaining, 0)} days${auditInfo.ato.days_remaining === null ? "" : ` · ATO: ${Math.max(auditInfo.ato.days_remaining, 0)} days`}`
-            : "ISO Audit: -- · CMMC: -- · DPA Review: --"}
+          {countdownParts.length > 0 ? countdownParts.join(" · ") : "No audits tracked"}
         </div>
       </div>
       {importProgress?.running && importProgress.total > 0 ? (

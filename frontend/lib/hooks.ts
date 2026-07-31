@@ -4,40 +4,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
-import { getApiUsage, getAuditInfo, getReanalyzeStatus } from "@/lib/api";
+import { getApiUsage, getAuditInfo, getReanalyzeStatus, type AuditInfoPayload } from "@/lib/api";
 import { useAnalysisProgressStore } from "@/lib/stores/analysis-progress";
 
-type AuditInfo = {
-  iso: {
-    audit_date: string;
-    days_remaining: number;
-    label: string;
-    frameworks: string[];
-  };
-  cmmc: {
-    audit_date: string;
-    days_remaining: number;
-    label: string;
-    frameworks: string[];
-  };
-  dpa: {
-    audit_date: string | null;
-    days_remaining: number | null;
-    label: string;
-    frameworks: string[];
-  };
-  ato: {
-    audit_date: string | null;
-    days_remaining: number | null;
-    label: string;
-    frameworks: string[];
-  };
-};
-
-let auditInfoCache: AuditInfo | null = null;
+let auditInfoCache: AuditInfoPayload | null = null;
 
 export function useAuditInfo() {
-  const [auditInfo, setAuditInfo] = useState<AuditInfo | null>(auditInfoCache);
+  const [auditInfo, setAuditInfo] = useState<AuditInfoPayload | null>(auditInfoCache);
   const [loading, setLoading] = useState<boolean>(auditInfoCache === null);
   const [error, setError] = useState<string | null>(null);
 

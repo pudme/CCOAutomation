@@ -34,14 +34,24 @@ function getRingColor(percent: number): string {
 function getDaysForFramework(
   framework: string,
   auditInfo: {
-    iso: { days_remaining: number; frameworks: string[] };
-    cmmc: { days_remaining: number; frameworks: string[] };
-    ato: { days_remaining: number | null; frameworks: string[] };
+    iso: { days_remaining: number | null; frameworks: string[]; enabled?: boolean };
+    cmmc: { days_remaining: number | null; frameworks: string[]; enabled?: boolean };
+    dpa?: { days_remaining: number | null; frameworks: string[]; enabled?: boolean };
+    ato: { days_remaining: number | null; frameworks: string[]; enabled?: boolean };
   },
 ): number | null {
-  if (auditInfo.iso.frameworks.includes(framework)) return auditInfo.iso.days_remaining;
-  if (auditInfo.cmmc.frameworks.includes(framework)) return auditInfo.cmmc.days_remaining;
-  if (auditInfo.ato.frameworks.includes(framework)) return auditInfo.ato.days_remaining;
+  if (auditInfo.iso.enabled !== false && auditInfo.iso.frameworks.includes(framework)) {
+    return auditInfo.iso.days_remaining;
+  }
+  if (auditInfo.cmmc.enabled !== false && auditInfo.cmmc.frameworks.includes(framework)) {
+    return auditInfo.cmmc.days_remaining;
+  }
+  if (auditInfo.dpa && auditInfo.dpa.enabled !== false && auditInfo.dpa.frameworks.includes(framework)) {
+    return auditInfo.dpa.days_remaining;
+  }
+  if (auditInfo.ato.enabled !== false && auditInfo.ato.frameworks.includes(framework)) {
+    return auditInfo.ato.days_remaining;
+  }
   return null;
 }
 
@@ -82,18 +92,54 @@ export default function DashboardPage() {
       ) : (
         <Card className="relative overflow-hidden p-6 text-center">
           <div className="absolute -right-8 -top-8 h-40 w-40 rounded-full bg-primary/10" />
-          <h2 className="text-2xl font-semibold">{auditInfo.iso.label}</h2>
-          {auditInfo.iso.days_remaining < 0 ? (
-            <p className="mt-3 text-4xl font-bold text-red-600">Audit window reached</p>
-          ) : (
-            <p className={`mt-3 text-6xl font-bold ${getUrgencyColor(auditInfo.iso.days_remaining)}`}>
-              {auditInfo.iso.days_remaining}
-            </p>
-          )}
-          <p className="mt-1 text-sm text-muted-foreground">Days remaining until audit date {auditInfo.iso.audit_date}</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {auditInfo.cmmc.label}: {Math.max(0, auditInfo.cmmc.days_remaining)} days ({auditInfo.cmmc.audit_date})
-          </p>
+          {(() => {
+            const tracked = (
+              [
+                { key: "iso", entry: auditInfo.iso },
+                { key: "cmmc", entry: auditInfo.cmmc },
+                { key: "dpa", entry: auditInfo.dpa },
+                { key: "ato", entry: auditInfo.ato },
+              ] as const
+            ).filter((item) => item.entry.enabled !== false);
+            const primary =
+              tracked.find((item) => item.entry.audit_date && item.entry.days_remaining !== null) ??
+              tracked[0] ??
+              null;
+            const secondary = tracked.filter((item) => item.key !== primary?.key && item.entry.audit_date);
+            if (!primary) {
+              return (
+                <>
+                  <h2 className="text-2xl font-semibold">No audits tracked</h2>
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    Enable an audit in Settings to show countdown tracking here.
+                  </p>
+                </>
+              );
+            }
+            const days = primary.entry.days_remaining;
+            return (
+              <>
+                <h2 className="text-2xl font-semibold">{primary.entry.label}</h2>
+                {days === null ? (
+                  <p className="mt-3 text-4xl font-bold text-muted-foreground">Date unset</p>
+                ) : days < 0 ? (
+                  <p className="mt-3 text-4xl font-bold text-red-600">Audit window reached</p>
+                ) : (
+                  <p className={`mt-3 text-6xl font-bold ${getUrgencyColor(days)}`}>{days}</p>
+                )}
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Days remaining until audit date {primary.entry.audit_date || "--"}
+                </p>
+                {secondary.map((item) => (
+                  <p key={item.key} className="mt-1 text-xs text-muted-foreground">
+                    {item.entry.label}:{" "}
+                    {item.entry.days_remaining === null ? "--" : Math.max(0, item.entry.days_remaining)} days
+                    {item.entry.audit_date ? ` (${item.entry.audit_date})` : ""}
+                  </p>
+                ))}
+              </>
+            );
+          })()}
           <div className="mt-4 flex flex-wrap gap-2">
             <Link href="/import" className="rounded bg-primary px-3 py-2 text-sm text-primary-foreground">
               Import Data
