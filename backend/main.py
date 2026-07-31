@@ -2,12 +2,14 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import importlib
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from loguru import logger
 from minio import Minio
 from minio.error import S3Error
 from sqlalchemy import select, text
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from config import get_settings
 from database import init_db
@@ -47,9 +49,34 @@ _evidence_watch_task: asyncio.Task[None] | None = None
 
 app = FastAPI(title="Compliance Platform API")
 
+_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_DEV_KEY_HEADER = "X-CCOA-Dev-Key"
+
+
+class DevWriteKeyMiddleware(BaseHTTPMiddleware):
+    """Local write-gate stopgap until Cognito/API Gateway JWT at GovCloud tier.
+
+    When CCOA_DEV_KEY is set, require matching X-CCOA-Dev-Key on write methods.
+    When unset, writes remain open (development convenience).
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        if request.method in _WRITE_METHODS:
+            expected = (settings.ccoa_dev_key or "").strip()
+            if expected:
+                provided = (request.headers.get(_DEV_KEY_HEADER) or "").strip()
+                if provided != expected:
+                    return JSONResponse(
+                        status_code=401,
+                        content={"detail": f"Missing or invalid {_DEV_KEY_HEADER}"},
+                    )
+        return await call_next(request)
+
+
+app.add_middleware(DevWriteKeyMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=settings.cors_origin_list(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -61,6 +88,7 @@ async def startup_event() -> None:
     global _background_worker_task, _evidence_watch_task
     await init_db()
     await _ensure_auditor_schema_columns()
+    await _load_all_frameworks_on_startup()
     await _cleanup_stale_imports_on_startup()
     content_hash_backfill_stats = await backfill_missing_content_hashes_if_needed(null_ratio_threshold=0.5)
     if content_hash_backfill_stats.get("ran"):
@@ -147,6 +175,47 @@ async def prewarm_chromadb() -> None:
         logger.warning("ChromaDB pre-warm failed (non-fatal): {}", exc)
 
 
+async def _load_all_frameworks_on_startup() -> None:
+    import time
+    from pathlib import Path
+
+    from services.framework_loader import load_framework
+
+    frameworks_dir = Path(__file__).parent / "config" / "frameworks"
+    yaml_files = sorted(frameworks_dir.glob("*.yaml"))
+    if not yaml_files:
+        logger.warning("No framework YAML files found in {}", frameworks_dir)
+        return
+    totals = {
+        "frameworks_loaded": 0,
+        "controls_created": 0,
+        "controls_updated": 0,
+        "mappings_created": 0,
+    }
+    started = time.perf_counter()
+    async with AsyncSessionLocal() as session:
+        for yaml_file in yaml_files:
+            try:
+                summary = await load_framework(yaml_file, session)
+                totals["frameworks_loaded"] += int(summary.get("frameworks_loaded", 0))
+                totals["controls_created"] += int(summary.get("controls_created", 0))
+                totals["controls_updated"] += int(summary.get("controls_updated", 0))
+                totals["mappings_created"] += int(summary.get("mappings_created", 0))
+                logger.info("Loaded framework YAML {}: {}", yaml_file.name, summary)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Failed to load framework {}: {}", yaml_file.name, exc)
+    elapsed_s = time.perf_counter() - started
+    logger.info(
+        "Framework startup load complete: files={} frameworks={} created={} updated={} mappings={} elapsed_seconds={:.3f}",
+        len(yaml_files),
+        totals["frameworks_loaded"],
+        totals["controls_created"],
+        totals["controls_updated"],
+        totals["mappings_created"],
+        elapsed_s,
+    )
+
+
 async def _ensure_auditor_schema_columns() -> None:
     statements = [
         "ALTER TABLE IF EXISTS data_imports ADD COLUMN IF NOT EXISTS batch_id VARCHAR(64)",
@@ -170,9 +239,22 @@ async def _ensure_auditor_schema_columns() -> None:
         "ALTER TABLE IF EXISTS auditor_checklists ADD COLUMN IF NOT EXISTS last_evidence_refresh VARCHAR(32)",
         "ALTER TABLE IF EXISTS auditor_checklists ADD COLUMN IF NOT EXISTS evidence_refresh_status VARCHAR(24)",
         "ALTER TABLE IF EXISTS auditor_checklists ADD COLUMN IF NOT EXISTS evidence_refresh_error TEXT",
+        "ALTER TABLE IF EXISTS auditor_checklists ADD COLUMN IF NOT EXISTS source_import_id INTEGER REFERENCES data_imports(id)",
         "ALTER TABLE IF EXISTS auditor_checklist_items ADD COLUMN IF NOT EXISTS source_import_id INTEGER",
         "ALTER TABLE IF EXISTS auditor_checklist_items ADD COLUMN IF NOT EXISTS raw_fields JSON",
         "ALTER TABLE IF EXISTS auditor_checklist_items ADD COLUMN IF NOT EXISTS evidence_mapping JSON",
+        # Column may already exist without FK from older ensures — attach FK + index idempotently.
+        (
+            "DO $$ BEGIN "
+            "ALTER TABLE auditor_checklist_items "
+            "ADD CONSTRAINT auditor_checklist_items_source_import_id_fkey "
+            "FOREIGN KEY (source_import_id) REFERENCES data_imports(id); "
+            "EXCEPTION WHEN duplicate_object THEN NULL; "
+            "WHEN undefined_table THEN NULL; "
+            "END $$"
+        ),
+        "CREATE INDEX IF NOT EXISTS ix_auditor_checklist_items_source_import_id ON auditor_checklist_items (source_import_id)",
+        "CREATE INDEX IF NOT EXISTS ix_auditor_checklists_source_import_id ON auditor_checklists (source_import_id)",
         "ALTER TABLE IF EXISTS batch_imports ADD COLUMN IF NOT EXISTS skipped_files JSON",
         "ALTER TABLE IF EXISTS evidence_items ADD COLUMN IF NOT EXISTS analysis_confidence VARCHAR(16)",
         "ALTER TABLE IF EXISTS evidence_items ADD COLUMN IF NOT EXISTS analysis_summary TEXT",
@@ -211,6 +293,8 @@ async def _ensure_auditor_schema_columns() -> None:
             "finished_at TIMESTAMPTZ NULL"
             ")"
         ),
+        "CREATE INDEX IF NOT EXISTS ix_background_jobs_job_type ON background_jobs (job_type)",
+        "CREATE INDEX IF NOT EXISTS ix_background_jobs_status ON background_jobs (status)",
         (
             "CREATE TABLE IF NOT EXISTS change_log ("
             "id SERIAL PRIMARY KEY,"
@@ -222,6 +306,8 @@ async def _ensure_auditor_schema_columns() -> None:
             "triggered_by VARCHAR(64) NOT NULL DEFAULT 'system'"
             ")"
         ),
+        "CREATE INDEX IF NOT EXISTS ix_change_log_category ON change_log (category)",
+        "CREATE INDEX IF NOT EXISTS ix_data_imports_batch_id ON data_imports (batch_id)",
     ]
     async with AsyncSessionLocal() as session:
         for statement in statements:

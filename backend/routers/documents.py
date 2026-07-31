@@ -250,9 +250,13 @@ async def reanalyze_batch_preview(
 async def search_documents(payload: DocumentSearchRequest) -> list[dict]:
     if not payload.query.strip():
         raise HTTPException(status_code=400, detail="query is required")
-    client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
-    collection = client.get_or_create_collection("meeting_notes")
-    result = collection.query(query_texts=[payload.query], n_results=5)
+    client = await asyncio.to_thread(
+        chromadb.HttpClient, host=settings.chroma_host, port=settings.chroma_port
+    )
+    collection = await asyncio.to_thread(client.get_or_create_collection, "meeting_notes")
+    result = await asyncio.to_thread(
+        collection.query, query_texts=[payload.query], n_results=5
+    )
     ids = result.get("ids", [[]])[0]
     docs = result.get("documents", [[]])[0]
     metas = result.get("metadatas", [[]])[0]
@@ -400,8 +404,8 @@ async def sync_folder(
 
             payload_by_name = {_normalize_sync_name(row["filename"]): row for row in upload_payloads}
             minio_client = get_minio_client()
-            if not minio_client.bucket_exists(settings.minio_bucket):
-                minio_client.make_bucket(settings.minio_bucket)
+            if not await asyncio.to_thread(minio_client.bucket_exists, settings.minio_bucket):
+                await asyncio.to_thread(minio_client.make_bucket, settings.minio_bucket)
 
             import_details: list[dict[str, Any]] = []
             for action in actionable:
@@ -413,7 +417,8 @@ async def sync_folder(
                     continue
                 file_bytes = payload["bytes"]
                 object_name = build_import_object_name(filename)
-                minio_client.put_object(
+                await asyncio.to_thread(
+                    minio_client.put_object,
                     settings.minio_bucket,
                     object_name,
                     io.BytesIO(file_bytes),
@@ -561,6 +566,14 @@ async def reanalyze_batch(
                 "last_document": None,
                 "documents": [str(row["filename"]) for row in candidates],
             }
+            await log_change(
+                session,
+                category="document",
+                action="Reanalyze queued",
+                subject="reanalyze-batch",
+                detail=f"Document reanalysis started for {len(candidates)} candidates",
+                triggered_by="api",
+            )
             await _set_reanalyze_cancel_requested(session, False)
             await _save_reanalyze_status(
                 {
@@ -639,6 +652,14 @@ async def reanalyze_batch_background(
     estimate = await estimate_batch_cost(requested)
     if estimate["will_exceed_limit"] and not payload.bypass_limit:
         raise HTTPException(status_code=402, detail=estimate)
+    await log_change(
+        session,
+        category="document",
+        action="Reanalyze queued",
+        subject="reanalyze-batch-background",
+        detail=f"Background reanalysis queued (limit={requested})",
+        triggered_by="api",
+    )
     job = await queue_reanalyze_job(
         session,
         limit=requested,
@@ -659,6 +680,14 @@ async def reanalyze_all_compat(
 
 @router.post("/reanalyze-cancel")
 async def reanalyze_cancel(session: AsyncSession = Depends(get_db)) -> dict:
+    await log_change(
+        session,
+        category="document",
+        action="Reanalyze cancelled",
+        subject="reanalyze-cancel",
+        detail="Document reanalysis cancel requested",
+        triggered_by="api",
+    )
     await _set_reanalyze_cancel_requested(session, True)
     return {"cancel_requested": True}
 
@@ -736,6 +765,17 @@ async def refresh_evidence_links(session: AsyncSession = Depends(get_db)) -> dic
             control.status = ControlStatus.NOT_STARTED
             reset += 1
             updated_controls += 1
+    await log_change(
+        session,
+        category="document",
+        action="Evidence links refreshed",
+        subject="refresh-links",
+        detail=(
+            f"Evidence links refreshed: updated={updated_controls}, "
+            f"evidenced={evidenced}, reset={reset}"
+        ),
+        triggered_by="api",
+    )
     await session.commit()
     return {"updated_controls": updated_controls, "evidenced": evidenced, "reset": reset}
 
@@ -884,12 +924,17 @@ async def download_document(document_id: str, session: AsyncSession = Depends(ge
         raise HTTPException(status_code=400, detail="Unsupported document source")
 
     try:
-        response = client.get_object(settings.minio_bucket, object_path)
+        def _download() -> bytes:
+            response = client.get_object(settings.minio_bucket, object_path)
+            try:
+                return response.read()
+            finally:
+                response.close()
+                response.release_conn()
+
+        data = await asyncio.to_thread(_download)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=404, detail="File not found in object store") from exc
-    data = response.read()
-    response.close()
-    response.release_conn()
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/octet-stream",
@@ -918,16 +963,25 @@ async def preview_document(document_id: str, session: AsyncSession = Depends(get
             raise HTTPException(status_code=404, detail="Document not found")
         object_path = item.minio_path or f"imports/{item.filename}"
         try:
-            response = client.get_object(settings.minio_bucket, object_path)
-            file_bytes = response.read()
-            response.close()
-            response.release_conn()
-        except Exception:
-            file_bytes = b""
+            def _preview_download() -> bytes:
+                response = client.get_object(settings.minio_bucket, object_path)
+                try:
+                    return response.read()
+                finally:
+                    response.close()
+                    response.release_conn()
+
+            file_bytes = await asyncio.to_thread(_preview_download)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to fetch object from storage for preview: {exc}",
+            ) from exc
+        preview_text = await asyncio.to_thread(extract_text_content, item.filename, file_bytes)
         return {
             "id": document_id,
             "filename": item.filename,
-            "preview_text": extract_text_content(item.filename, file_bytes)[:2000],
+            "preview_text": preview_text[:2000],
             "doc_type": "import",
             "framework": item.framework,
             "control_ids": item.control_ids or [],
@@ -1023,14 +1077,14 @@ async def delete_document(
         secure=False,
     )
     force = payload.force if payload else False
-    deleted_filename = await _delete_document_by_id(
+    result = await _delete_document_by_id(
         session=session,
         client=client,
         document_id=document_id,
         force=force,
     )
     await session.commit()
-    return {"status": "deleted", "filename": deleted_filename}
+    return result
 
 
 async def _delete_document_by_id(
@@ -1038,7 +1092,7 @@ async def _delete_document_by_id(
     client,
     document_id: str,
     force: bool,
-) -> str:
+) -> dict:
     source, raw_id = _split_document_id(document_id)
     filename = None
     if source == "import":
@@ -1126,7 +1180,7 @@ async def _delete_documents_by_filename(
     client,
     filename: str,
     force: bool,
-) -> str:
+) -> dict:
     filename_key = filename.strip().lower()
     evidence_rows = list(
         (
@@ -1183,11 +1237,13 @@ async def _delete_documents_by_filename(
         for row in import_rows
         if row.minio_path
     }
+    storage_errors: list[str] = []
     for object_path in object_paths:
         try:
-            client.remove_object(settings.minio_bucket, object_path)
-        except Exception:
-            pass
+            await asyncio.to_thread(client.remove_object, settings.minio_bucket, object_path)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("MinIO remove_object failed for {}: {}", object_path, exc)
+            storage_errors.append(f"{object_path}: {exc}")
 
     for row in evidence_rows:
         await session.delete(row)
@@ -1198,9 +1254,17 @@ async def _delete_documents_by_filename(
         category="document",
         action="Document deleted",
         subject=filename,
-        detail=f"Document deleted: {filename}",
+        detail=(
+            f"Document deleted: {filename}"
+            + (f"; storage partial failure: {'; '.join(storage_errors)}" if storage_errors else "")
+        ),
     )
-    return filename
+    return {
+        "status": "deleted_partial" if storage_errors else "deleted",
+        "filename": filename,
+        "storage_partial_failure": bool(storage_errors),
+        "storage_errors": storage_errors,
+    }
 
 
 def _framework_label_for_evidence(item: EvidenceItem) -> str:

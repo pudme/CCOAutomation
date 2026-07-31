@@ -1,7 +1,8 @@
-# NIST SP 800-53 Rev 5 — Complete Moderate Baseline
-# Includes all base controls and Moderate-required enhancements
-# Total: ~900 controls and enhancements across 20 families
-# Source: NIST SP 800-53 Rev 5 (September 2020) and Moderate baseline profile
+# NIST SP 800-53 Rev 5 — Moderate Baseline (loaded set)
+# 420 controls loaded in this YAML (base controls + enhancements present in file).
+# TODO: Reconcile this loaded set against the official NIST SP 800-53B moderate
+# baseline / OSCAL export when internet access is available. Do not assume the
+# historical "~900" header claim or this file count is authoritative until then.
 
 framework:
   name: "NIST SP 800-53 Rev 5 — Moderate Baseline"

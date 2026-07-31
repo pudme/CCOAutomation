@@ -1,6 +1,7 @@
 ---
 # ISO/IEC 27001:2022 Framework Configuration
-# All 93 Annex A controls. Load with: python cli.py load-framework config/frameworks/iso27001_2022.yaml
+# Composition: 93 Annex A controls + 19 ISMS clause controls (Cl.*) = 112 total.
+# Load with: python cli.py load-framework config/frameworks/iso27001_2022.yaml
 #
 # Cross-mappings reference CMMC Level 2 practice IDs and NIST SP 800-171 Rev 2 section IDs.
 # Maps_to entries are added as the CMMC framework config is loaded — they reference controls

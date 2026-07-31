@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models.compliance import Obligation, ObligationStatus
+from services.change_log import log_change
 
 router = APIRouter(prefix="/obligations", tags=["obligations"])
 
@@ -54,6 +55,15 @@ async def create_obligation(
         notes="",
     )
     session.add(obligation)
+    await session.flush()
+    await log_change(
+        session,
+        category="obligation",
+        action="Obligation created",
+        subject=obligation.obligation_id,
+        detail=f"Obligation created: {obligation.obligation_id}",
+        triggered_by="api",
+    )
     await session.commit()
     await session.refresh(obligation)
     return _serialize_obligation(obligation)
@@ -88,6 +98,14 @@ async def patch_obligation(
         obligation.last_satisfied = payload.last_satisfied
     if payload.owner is not None:
         obligation.owner = payload.owner
+    await log_change(
+        session,
+        category="obligation",
+        action="Obligation updated",
+        subject=obligation.obligation_id,
+        detail=f"Obligation updated: {obligation.obligation_id}",
+        triggered_by="api",
+    )
     await session.commit()
     return _serialize_obligation(obligation)
 
@@ -105,6 +123,14 @@ async def soft_delete_obligation(
     marker = "[SOFT_DELETED]"
     if marker not in (obligation.notes or ""):
         obligation.notes = f"{marker} {(obligation.notes or '').strip()}".strip()
+    await log_change(
+        session,
+        category="obligation",
+        action="Obligation deleted",
+        subject=obligation.obligation_id,
+        detail=f"Obligation deleted: {obligation.obligation_id}",
+        triggered_by="api",
+    )
     await session.commit()
     return {"status": "deleted", "obligation_id": obligation.obligation_id}
 

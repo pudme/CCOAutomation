@@ -17,6 +17,7 @@ from models.auditor import (
     AuditorItemStatus,
 )
 from models.compliance import DataImport, EvidenceItem
+from services.change_log import log_change
 
 router = APIRouter(tags=["auditor"])
 
@@ -168,6 +169,15 @@ async def create_checklist(payload: ChecklistCreateRequest, session: AsyncSessio
         fields_found=payload.fields_found,
     )
     session.add(checklist)
+    await session.flush()
+    await log_change(
+        session,
+        category="auditor",
+        action="Checklist created",
+        subject=checklist.name,
+        detail=f"Checklist created: {checklist.name}",
+        triggered_by="api",
+    )
     await session.commit()
     await session.refresh(checklist)
     return _serialize_checklist(checklist)
@@ -214,6 +224,15 @@ async def create_checklist_item(
         evidence_mapping={"results": []},
     )
     session.add(item)
+    await session.flush()
+    await log_change(
+        session,
+        category="auditor",
+        action="Checklist item created",
+        subject=item.item_number,
+        detail=f"Checklist item created: {item.item_number} (checklist={checklist_id})",
+        triggered_by="api",
+    )
     await session.commit()
     await session.refresh(item)
     return _serialize_item(item)
@@ -275,6 +294,14 @@ async def patch_checklist_item(
         item.control_ids = payload.control_ids
     if payload.raw_fields is not None:
         item.raw_fields = payload.raw_fields
+    await log_change(
+        session,
+        category="auditor",
+        action="Checklist item updated",
+        subject=item.item_number,
+        detail=f"Checklist item updated: {item.item_number} (checklist={checklist_id})",
+        triggered_by="api",
+    )
     await session.commit()
     return _serialize_item(item)
 
@@ -310,6 +337,16 @@ async def generate_item_response(
     ).scalar_one_or_none()
     if item is None:
         raise HTTPException(status_code=404, detail="Checklist item not found")
+    if result.get("updated"):
+        await log_change(
+            session,
+            category="auditor",
+            action="Response generated",
+            subject=item.item_number,
+            detail=f"Response generated for item {item.item_number} (checklist={checklist_id})",
+            triggered_by="api",
+        )
+        await session.commit()
     return {"result": result, "item": _serialize_item(item)}
 
 
@@ -493,6 +530,7 @@ async def delete_checklist(checklist_id: int, session: AsyncSession = Depends(ge
     ).scalar_one_or_none()
     if checklist is None:
         raise HTTPException(status_code=404, detail="Checklist not found")
+    name = checklist.name
     await session.execute(
         select(AuditorChecklistItem).where(AuditorChecklistItem.checklist_id == checklist_id)
     )
@@ -501,6 +539,14 @@ async def delete_checklist(checklist_id: int, session: AsyncSession = Depends(ge
     )
     await session.execute(
         AuditorChecklist.__table__.delete().where(AuditorChecklist.id == checklist_id)
+    )
+    await log_change(
+        session,
+        category="auditor",
+        action="Checklist deleted",
+        subject=name,
+        detail=f"Checklist deleted: {name}",
+        triggered_by="api",
     )
     await session.commit()
     return {"status": "deleted", "checklist_id": checklist_id}
@@ -522,6 +568,14 @@ async def delete_checklist_source_file(
             AuditorChecklistItem.checklist_id == checklist_id,
             AuditorChecklistItem.source_import_id == import_id,
         )
+    )
+    await log_change(
+        session,
+        category="auditor",
+        action="Checklist source file deleted",
+        subject=str(checklist_id),
+        detail=f"Source file import_id={import_id} removed from checklist {checklist_id}",
+        triggered_by="api",
     )
     await session.commit()
     return {"status": "deleted", "checklist_id": checklist_id, "import_id": import_id}

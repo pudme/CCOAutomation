@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
+from framework_constants import NON_CATALOG_FRAMEWORKS
 from models.compliance import (
     AgentActionLog,
     Finding,
@@ -27,7 +28,7 @@ async def get_dashboard_summary(session: AsyncSession = Depends(get_db)) -> dict
         (
             await session.execute(
                 select(Framework)
-                .where(Framework.short_name != "obligations")
+                .where(Framework.short_name.notin_(NON_CATALOG_FRAMEWORKS))
                 .order_by(Framework.short_name.asc())
             )
         ).scalars()

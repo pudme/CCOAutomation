@@ -28,7 +28,7 @@ controls:
   # DOMAIN: Access Control (AC) — 22 practices
   # =========================================================================
 
-  - id: AC.L1-3.1.1
+  - id: AC.L2-3.1.1
     title: Authorized Access Control
     domain: Access Control
     owner_default: IT
@@ -41,7 +41,7 @@ controls:
     maps_to:
       iso27001: [A.5.15, A.5.16, A.8.3]
 
-  - id: AC.L1-3.1.2
+  - id: AC.L2-3.1.2
     title: Transaction and Function Control
     domain: Access Control
     owner_default: IT
@@ -573,7 +573,7 @@ controls:
   # DOMAIN: Identification and Authentication (IA) — 11 practices
   # =========================================================================
 
-  - id: IA.L1-3.5.1
+  - id: IA.L2-3.5.1
     title: Identification
     domain: Identification and Authentication
     owner_default: IT
@@ -586,7 +586,7 @@ controls:
     maps_to:
       iso27001: [A.5.16]
 
-  - id: IA.L1-3.5.2
+  - id: IA.L2-3.5.2
     title: Authentication
     domain: Identification and Authentication
     owner_default: IT
@@ -825,7 +825,7 @@ controls:
   # DOMAIN: Media Protection (MP) — 9 practices
   # =========================================================================
 
-  - id: MP.L1-3.8.1
+  - id: MP.L2-3.8.1
     title: Media Protection
     domain: Media Protection
     owner_default: IT
@@ -836,7 +836,7 @@ controls:
     maps_to:
       iso27001: [A.7.10, A.8.10]
 
-  - id: MP.L1-3.8.2
+  - id: MP.L2-3.8.2
     title: Media Access
     domain: Media Protection
     owner_default: IT
@@ -847,7 +847,7 @@ controls:
     maps_to:
       iso27001: [A.7.10]
 
-  - id: MP.L1-3.8.3
+  - id: MP.L2-3.8.3
     title: Media Sanitization
     domain: Media Protection
     owner_default: IT
@@ -968,7 +968,7 @@ controls:
   # DOMAIN: Physical Protection (PE) — 6 practices
   # =========================================================================
 
-  - id: PE.L1-3.10.1
+  - id: PE.L2-3.10.1
     title: Limit Physical Access
     domain: Physical Protection
     owner_default: Facilities / IT
@@ -981,7 +981,7 @@ controls:
     maps_to:
       iso27001: [A.7.1, A.7.2, A.7.3]
 
-  - id: PE.L1-3.10.2
+  - id: PE.L2-3.10.2
     title: Escort Visitors
     domain: Physical Protection
     owner_default: Facilities / IT
@@ -1044,7 +1044,7 @@ controls:
   # DOMAIN: Risk Management (RM) — 3 practices
   # =========================================================================
 
-  - id: RM.L2-3.11.1
+  - id: RA.L2-3.11.1
     title: Risk Assessments
     domain: Risk Management
     owner_default: Chief Compliance Officer
@@ -1057,7 +1057,7 @@ controls:
     maps_to:
       iso27001: [A.5.35]
 
-  - id: RM.L2-3.11.2
+  - id: RA.L2-3.11.2
     title: Vulnerability Scan
     domain: Risk Management
     owner_default: IT
@@ -1070,7 +1070,7 @@ controls:
     maps_to:
       iso27001: [A.8.8]
 
-  - id: RM.L2-3.11.3
+  - id: RA.L2-3.11.3
     title: Remediate Vulnerabilities
     domain: Risk Management
     owner_default: IT
@@ -1137,7 +1137,7 @@ controls:
   # DOMAIN: System and Communications Protection (SC) — 16 practices
   # =========================================================================
 
-  - id: SC.L1-3.13.1
+  - id: SC.L2-3.13.1
     title: Boundary Protection
     domain: System and Communications Protection
     owner_default: IT
@@ -1150,7 +1150,7 @@ controls:
     maps_to:
       iso27001: [A.8.20, A.8.21]
 
-  - id: SC.L1-3.13.5
+  - id: SC.L2-3.13.5
     title: Public-Access System Separation
     domain: System and Communications Protection
     owner_default: IT
@@ -1327,7 +1327,7 @@ controls:
   # DOMAIN: System and Information Integrity (SI) — 7 practices
   # =========================================================================
 
-  - id: SI.L1-3.14.1
+  - id: SI.L2-3.14.1
     title: Flaw Remediation
     domain: System and Information Integrity
     owner_default: IT
@@ -1340,7 +1340,7 @@ controls:
     maps_to:
       iso27001: [A.8.7, A.8.8]
 
-  - id: SI.L1-3.14.2
+  - id: SI.L2-3.14.2
     title: Malicious Code Protection
     domain: System and Information Integrity
     owner_default: IT
@@ -1353,7 +1353,7 @@ controls:
     maps_to:
       iso27001: [A.8.7]
 
-  - id: SI.L1-3.14.3
+  - id: SI.L2-3.14.3
     title: Security Alerts
     domain: System and Information Integrity
     owner_default: IT
@@ -1364,7 +1364,7 @@ controls:
     maps_to:
       iso27001: [A.8.16]
 
-  - id: SI.L1-3.14.4
+  - id: SI.L2-3.14.4
     title: Update Malicious Code Protection
     domain: System and Information Integrity
     owner_default: IT
@@ -1375,7 +1375,7 @@ controls:
     maps_to:
       iso27001: [A.8.7, A.8.23]
 
-  - id: SI.L1-3.14.5
+  - id: SI.L2-3.14.5
     title: System and File Scanning
     domain: System and Information Integrity
     owner_default: IT

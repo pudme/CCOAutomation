@@ -34,10 +34,27 @@ class Settings(BaseSettings):
 
     # AI
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
+    anthropic_model_sonnet: str = Field(
+        default="claude-sonnet-4-5-20250929",
+        alias="ANTHROPIC_MODEL_SONNET",
+    )
+    anthropic_model_haiku: str = Field(
+        default="claude-haiku-4-5-20251001",
+        alias="ANTHROPIC_MODEL_HAIKU",
+    )
 
     # App
     app_env: str = Field(default="development", alias="APP_ENV")
     audit_date: str = Field(default="2026-05-15", alias="AUDIT_DATE")
+    # Local write-gate stopgap (not Cognito). Empty = writes unrestricted (dev convenience).
+    ccoa_dev_key: str = Field(default="", alias="CCOA_DEV_KEY")
+    # Comma-separated browser origins allowed by CORS (default host UI port 3001).
+    cors_origins: str = Field(default="http://localhost:3001", alias="CORS_ORIGINS")
+    # Public base URL for generated report download links.
+    public_api_base_url: str = Field(default="http://localhost:8010", alias="PUBLIC_API_BASE_URL")
+
+    def cors_origin_list(self) -> list[str]:
+        return [part.strip() for part in (self.cors_origins or "").split(",") if part.strip()]
 
     # Local evidence drop watcher (bind-mounted folder)
     evidence_watch_path: str = Field(default="/app/evidence-drop", alias="EVIDENCE_WATCH_PATH")

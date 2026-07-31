@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from framework_constants import CMMC_FRAMEWORKS
 from models.compliance import Framework, PersonnelRecord
 
 
@@ -134,12 +135,21 @@ async def _dedupe_personnel_by_entra_upn(session: AsyncSession) -> None:
     await session.commit()
 
 
-async def run_personnel_check(session: AsyncSession) -> PersonnelComplianceReport:
+async def run_personnel_check(
+    session: AsyncSession,
+    *,
+    include_canaide: bool = False,
+) -> PersonnelComplianceReport:
     await _dedupe_personnel_by_entra_upn(session)
-    active_result = await session.execute(select(PersonnelRecord).where(PersonnelRecord.active.is_(True)))
+    active_stmt = select(PersonnelRecord).where(PersonnelRecord.active.is_(True))
+    terminated_stmt = select(PersonnelRecord).where(PersonnelRecord.active.is_(False))
+    if not include_canaide:
+        active_stmt = active_stmt.where(PersonnelRecord.entity == "Apprio")
+        terminated_stmt = terminated_stmt.where(PersonnelRecord.entity == "Apprio")
+    active_result = await session.execute(active_stmt)
     active_records = list(active_result.scalars())
 
-    terminated_result = await session.execute(select(PersonnelRecord).where(PersonnelRecord.active.is_(False)))
+    terminated_result = await session.execute(terminated_stmt)
     terminated_records = list(terminated_result.scalars())
 
     training_gaps = [
@@ -176,7 +186,7 @@ async def run_personnel_check(session: AsyncSession) -> PersonnelComplianceRepor
     ]
 
     framework_count_result = await session.execute(
-        select(func.count(Framework.id)).where(Framework.short_name.in_(["cmmc_l2", "cmmc"]))
+        select(func.count(Framework.id)).where(Framework.short_name.in_(CMMC_FRAMEWORKS))
     )
     cmmc_enabled = (framework_count_result.scalar_one() or 0) > 0
     cmmc_gaps: list[CmmcGapItem] = []

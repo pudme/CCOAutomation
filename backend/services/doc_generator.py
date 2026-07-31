@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,7 +44,8 @@ def _upload_bytes(filename: str, content: bytes, content_type: str) -> tuple[str
         len(content),
         content_type=content_type,
     )
-    return object_name, f"http://localhost:8010/reports/download/{filename}"
+    base = settings.public_api_base_url.rstrip("/")
+    return object_name, f"{base}/reports/download/{filename}"
 
 
 def _doc_with_header() -> Document:
@@ -129,7 +131,8 @@ async def generate_gap_report(framework_short_name: str, session: AsyncSession) 
     buffer = io.BytesIO()
     wb.save(buffer)
     filename = f"{framework_short_name}_GapReport_{datetime.now(timezone.utc).strftime('%Y%m%d')}.xlsx"
-    minio_path, url = _upload_bytes(
+    minio_path, url = await asyncio.to_thread(
+        _upload_bytes,
         filename,
         buffer.getvalue(),
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -172,7 +175,9 @@ async def generate_scorecard(session: AsyncSession) -> dict[str, str]:
     pdf.save()
 
     filename = f"MGMT_Scorecard_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf"
-    minio_path, url = _upload_bytes(filename, buf.getvalue(), "application/pdf")
+    minio_path, url = await asyncio.to_thread(
+        _upload_bytes, filename, buf.getvalue(), "application/pdf"
+    )
     return {"filename": filename, "minio_path": minio_path, "download_url": url}
 
 
@@ -194,7 +199,8 @@ async def generate_corrective_action_report(session: AsyncSession) -> dict[str, 
     buffer = io.BytesIO()
     doc.save(buffer)
     filename = f"CA_Report_{datetime.now(timezone.utc).strftime('%Y%m%d')}.docx"
-    minio_path, url = _upload_bytes(
+    minio_path, url = await asyncio.to_thread(
+        _upload_bytes,
         filename,
         buffer.getvalue(),
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -229,7 +235,8 @@ async def generate_audit_package_index(framework_short_name: str, session: Async
     buffer = io.BytesIO()
     doc.save(buffer)
     filename = f"{framework_short_name}_AuditIndex_{datetime.now(timezone.utc).strftime('%Y%m%d')}.docx"
-    minio_path, url = _upload_bytes(
+    minio_path, url = await asyncio.to_thread(
+        _upload_bytes,
         filename,
         buffer.getvalue(),
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

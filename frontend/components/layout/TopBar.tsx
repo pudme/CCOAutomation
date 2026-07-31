@@ -10,8 +10,10 @@ function getTitle(pathname: string): string {
   if (pathname.startsWith("/frameworks")) return "Frameworks";
   if (pathname.startsWith("/documents")) return "Documents";
   if (pathname.startsWith("/findings")) return "Findings";
+  if (pathname.startsWith("/evidence")) return "Evidence";
   if (pathname.startsWith("/obligations")) return "Obligations";
   if (pathname.startsWith("/personnel")) return "Personnel";
+  if (pathname.startsWith("/workforce")) return "Workforce";
   if (pathname.startsWith("/dpa/documents")) return "DPA Documents";
   if (pathname.startsWith("/dpa/auditor")) return "DPA Auditor";
   if (pathname.startsWith("/dpa")) return "DPA Overview";

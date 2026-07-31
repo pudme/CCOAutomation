@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from database import get_db
 from models.compliance import Control, ControlStatus, EvidenceControlLink
+from services.change_log import log_change
 
 router = APIRouter(prefix="/controls", tags=["controls"])
 
@@ -86,6 +87,14 @@ async def patch_control(
         control.status = ControlStatus(payload.status)
     if payload.notes is not None:
         control.status_notes = payload.notes
+    await log_change(
+        session,
+        category="control",
+        action="Control updated",
+        subject=control.control_id,
+        detail=f"Control updated: {control.control_id} status={control.status.value}",
+        triggered_by="api",
+    )
     await session.commit()
     return {"status": "updated", "control_id": control.control_id}
 

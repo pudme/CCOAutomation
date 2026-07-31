@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -67,12 +68,17 @@ async def download_report(filename: str) -> StreamingResponse:
     )
     object_name = f"generated/{filename}"
     try:
-        response = client.get_object(settings.minio_bucket, object_name)
+        def _download() -> bytes:
+            response = client.get_object(settings.minio_bucket, object_name)
+            try:
+                return response.read()
+            finally:
+                response.close()
+                response.release_conn()
+
+        data = await asyncio.to_thread(_download)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=404, detail=f"Report not found: {filename}") from exc
-    data = response.read()
-    response.close()
-    response.release_conn()
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/octet-stream",

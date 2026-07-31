@@ -9,6 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai.gateway import estimate_batch_cost, get_usage_today
 from database import get_db
+from framework_constants import ATO_FRAMEWORKS as _ATO
+from framework_constants import CMMC_FRAMEWORKS as _CMMC
+from framework_constants import DPA_FRAMEWORKS as _DPA
+from framework_constants import ISO_FRAMEWORKS as _ISO
 from models.compliance import AppSetting
 from services.change_log import log_change
 
@@ -23,10 +27,10 @@ DEFAULT_AUDIT_DATE_CMMC = "2026-09-01"
 DEFAULT_API_DAILY_LIMIT = "200"
 DEFAULT_API_CALLS_ENABLED = "true"
 
-ISO_FRAMEWORKS = ["iso27001", "iso20000", "iso9001"]
-CMMC_FRAMEWORKS = ["cmmc_l2"]
-DPA_FRAMEWORKS = ["dpa_attachment_c"]
-ATO_FRAMEWORKS = ["nist_800_53"]
+ISO_FRAMEWORKS = sorted(_ISO)
+CMMC_FRAMEWORKS = sorted(name for name in _CMMC if name != "cmmc")
+DPA_FRAMEWORKS = sorted(_DPA)
+ATO_FRAMEWORKS = sorted(_ATO)
 
 
 def _today() -> date:

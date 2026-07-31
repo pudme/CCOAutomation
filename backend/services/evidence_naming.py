@@ -19,6 +19,9 @@ def _slugify(value: str) -> str:
     return text or "document"
 
 
+DISPLAY_NAME_MAX_LEN = 80
+
+
 def build_evidence_display_name(
     *,
     id_token: str,
@@ -27,14 +30,25 @@ def build_evidence_display_name(
     slug_source: str,
     original_filename: str,
 ) -> str:
-    """Format: {id_token} {evidence_type} {collected_date} {slug}.ext — spaces, no underscores."""
+    """Format: {id_token} {evidence_type} {collected_date} {slug}.ext — spaces, no underscores.
+
+    Total length is capped near DISPLAY_NAME_MAX_LEN by truncating the slug from the end.
+    Collision suffixes like ' (2)' are applied by callers after this returns.
+    """
     type_value = evidence_type.value if isinstance(evidence_type, EvidenceType) else str(evidence_type)
     type_token = _slugify(type_value.replace("_", " "))
     date_token = (collected_date or "undated").strip() or "undated"
     slug = _slugify(slug_source)
     ext = Path(original_filename or "").suffix.lower() or ".bin"
     id_clean = str(id_token or "unknown").replace("_", " ").strip()
-    return f"{id_clean} {type_token} {date_token} {slug}{ext}"
+    prefix = f"{id_clean} {type_token} {date_token} "
+    # Cap total including extension; truncate slug from the end.
+    max_slug = max(1, DISPLAY_NAME_MAX_LEN - len(prefix) - len(ext))
+    if len(slug) > max_slug:
+        slug = slug[:max_slug].rstrip(" .-")
+        if not slug:
+            slug = "doc"
+    return f"{prefix}{slug}{ext}"
 
 
 def _collision_suffix(base_name: str, existing: set[str], *, force_numbered: bool = False) -> str:

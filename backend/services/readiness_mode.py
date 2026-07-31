@@ -5,11 +5,10 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from framework_constants import CMMC_FRAMEWORKS, ISO_FRAMEWORKS
 from models.auditor import AuditorChecklist, AuditorChecklistItem, AuditorChecklistStatus, AuditorItemStatus
 from models.compliance import Control, ControlStatus, Framework
 
-ISO_FRAMEWORKS = {"iso27001", "iso20000", "iso9001"}
-CMMC_FRAMEWORKS = {"cmmc_l2"}
 _STALE_REFRESH_WINDOW = timedelta(minutes=10)
 
 

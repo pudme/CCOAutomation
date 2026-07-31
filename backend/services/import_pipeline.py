@@ -69,6 +69,34 @@ _CONTROL_ID_PATTERNS = [
     r"\b([A-Z]{2,4}\.L[12]-[\d\.]+)\b",
     r"\b([A-Z]{2,4}\.\d+\.\d{3})\b",
 ]
+# Framework labels Claude often prefixes onto control IDs (longest first).
+_FRAMEWORK_ID_PREFIXES = (
+    "iso/iec 27001:2022",
+    "iso/iec 27001",
+    "iso 27001:2022",
+    "iso 27001",
+    "iso27001",
+    "iso 20000-1:2018",
+    "iso 20000-1",
+    "iso 20000",
+    "iso20000",
+    "iso 9001:2015",
+    "iso 9001",
+    "iso9001",
+    "nist sp 800-53 rev 5",
+    "nist sp 800-53",
+    "nist 800-53",
+    "nist csf 2.0",
+    "nist csf",
+    "nist",
+    "hipaa security rule",
+    "hipaa",
+    "cmmc level 2",
+    "cmmc l2",
+    "cmmc",
+    "dpa attachment c",
+    "dpa",
+)
 _DPA_REQUEST_ID_PATTERN = re.compile(r"\bDPA[-_\s]*0*([1-9]|1[0-9]|2[0-3])\b", re.IGNORECASE)
 _REANALYZE_CHECKPOINT_KEY = "reanalyze_checkpoint"
 _BLOCKED_IMPORT_FILENAMES = {"readme.md"}
@@ -171,8 +199,13 @@ def _embed_chunks_to_collection(
     collection = client.get_or_create_collection(collection_name)
     try:
         collection.delete(where={"import_id": str(import_id)})
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Chroma delete failed before re-embed for import_id={} collection={}: {}",
+            import_id,
+            collection_name,
+            exc,
+        )
     chroma_batch_size = 5000
     for start in range(0, len(chunks), chroma_batch_size):
         end = min(start + chroma_batch_size, len(chunks))
@@ -222,6 +255,24 @@ def embed_import_text(
             chunks=chunks,
             safe_metadata=safe_metadata,
         )
+
+
+async def _embed_import_text_async(
+    import_id: int,
+    text: str,
+    metadata: dict[str, str],
+    *,
+    detected_type: str | None = None,
+    force_collections: tuple[str, ...] | None = None,
+) -> None:
+    await asyncio.to_thread(
+        embed_import_text,
+        import_id,
+        text,
+        metadata,
+        detected_type=detected_type,
+        force_collections=force_collections,
+    )
 
 
 def _extract_words(text: str, max_words: int) -> str:
@@ -315,12 +366,17 @@ def extract_full_text_content(filename: str, file_bytes: bytes) -> str:
 async def _read_import_bytes(minio_path: str | None) -> bytes:
     if not minio_path:
         return b""
-    client = get_minio_client()
-    response = client.get_object(settings.minio_bucket, minio_path)
-    payload = response.read()
-    response.close()
-    response.release_conn()
-    return payload
+
+    def _fetch() -> bytes:
+        client = get_minio_client()
+        response = client.get_object(settings.minio_bucket, minio_path)
+        try:
+            return response.read()
+        finally:
+            response.close()
+            response.release_conn()
+
+    return await asyncio.to_thread(_fetch)
 
 
 def _column_value(row: dict[str, Any], column_name: str | None) -> str | None:
@@ -870,6 +926,37 @@ async def _get_control_match_index(session: AsyncSession) -> dict[str, Any]:
     return index
 
 
+def _normalize_incoming_control_id(raw: str) -> str:
+    """Normalize AI-returned control ID strings for lookup only; does not change stored IDs.
+
+    Examples: "CMMC AC.L2-3.1.1" / "CMMC.AC.L2-3.1.1" → "AC.L2-3.1.1"
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    # Unify separators then strip known framework prefixes repeatedly.
+    candidate = text.replace("_", " ")
+    candidate = re.sub(r"\s+", " ", candidate).strip()
+    lowered = candidate.lower()
+    changed = True
+    while changed:
+        changed = False
+        for prefix in _FRAMEWORK_ID_PREFIXES:
+            if lowered.startswith(prefix):
+                rest = candidate[len(prefix) :].lstrip(" .:-")
+                candidate = rest.strip()
+                lowered = candidate.lower()
+                changed = True
+                break
+    # "CMMC.AC.L2-..." style after prefix strip may still have a leading framework token.
+    candidate = candidate.strip(" .:-")
+    # Prefer extracting a known control-id shaped token if the string still has prose.
+    tokens = _extract_control_tokens(candidate)
+    if tokens:
+        return tokens[0]
+    return candidate
+
+
 def _extract_control_tokens(raw: str) -> list[str]:
     text = str(raw or "").strip()
     if not text:
@@ -903,7 +990,6 @@ async def _match_controls_from_raw(
     index = await _get_control_match_index(session)
     by_id: dict[str, Control] = index["by_id"]
     by_title: dict[str, Control] = index["by_title"]
-    controls: list[Control] = index["controls"]
 
     matched: dict[int, Control] = {}
     unmatched: list[str] = []
@@ -912,29 +998,40 @@ async def _match_controls_from_raw(
         text = str(raw or "").strip()
         if not text:
             continue
-        key = text.lower()
-        control = by_id.get(key)
-        if control is None:
-            for token in _extract_control_tokens(text):
-                control = by_id.get(token.lower())
-                if control is not None:
-                    break
-        if control is None:
-            for control_id_key, maybe_control in by_id.items():
-                if control_id_key in key:
-                    control = maybe_control
-                    break
-        if control is None:
-            phrase = _extract_title_phrase(text)
-            if phrase:
-                exact_title = by_title.get(phrase)
-                if exact_title is not None:
-                    control = exact_title
-                else:
-                    for maybe_title, maybe_control in by_title.items():
-                        if phrase in maybe_title or maybe_title in phrase:
-                            control = maybe_control
-                            break
+        normalized = _normalize_incoming_control_id(text)
+        candidates = [text]
+        if normalized and normalized.lower() != text.lower():
+            candidates.append(normalized)
+
+        control = None
+        for candidate in candidates:
+            key = candidate.lower()
+            control = by_id.get(key)
+            if control is None:
+                for token in _extract_control_tokens(candidate):
+                    control = by_id.get(token.lower())
+                    if control is not None:
+                        break
+            if control is None and normalized:
+                control = by_id.get(normalized.lower())
+            if control is None:
+                for control_id_key, maybe_control in by_id.items():
+                    if control_id_key in key:
+                        control = maybe_control
+                        break
+            if control is None:
+                phrase = _extract_title_phrase(candidate)
+                if phrase:
+                    exact_title = by_title.get(phrase)
+                    if exact_title is not None:
+                        control = exact_title
+                    else:
+                        for maybe_title, maybe_control in by_title.items():
+                            if phrase in maybe_title or maybe_title in phrase:
+                                control = maybe_control
+                                break
+            if control is not None:
+                break
         if control is None:
             unmatched.append(text)
             continue
@@ -1969,7 +2066,7 @@ async def reanalyze_all_evidence_imports(
             if (
                 existing_evidence is not None
                 and (existing_evidence.analysis_summary or "").strip()
-                and existing_evidence.controls
+                and existing_evidence.control_links
             ):
                 stats["skipped_already_analyzed"] += 1
                 processed += 1
@@ -1993,7 +2090,7 @@ async def reanalyze_all_evidence_imports(
             if len(embedding_text) > 200000:
                 embedding_text = embedding_text[:200000]
             if full_text.strip():
-                embed_import_text(
+                await _embed_import_text_async(
                     import_id=record.id,
                     text=embedding_text,
                     metadata={
@@ -2013,7 +2110,7 @@ async def reanalyze_all_evidence_imports(
                 bypass_limit=bypass_limit,
             )
             if full_text.strip():
-                embed_import_text(
+                await _embed_import_text_async(
                     import_id=record.id,
                     text=embedding_text,
                     metadata={
@@ -2122,9 +2219,11 @@ async def fix_compliance_doc_embeddings(
     *,
     threshold: int | None = None,
 ) -> dict[str, int]:
-    client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
-    compliance = client.get_or_create_collection("compliance_docs")
-    current_count = int(compliance.count())
+    client = await asyncio.to_thread(
+        chromadb.HttpClient, host=settings.chroma_host, port=settings.chroma_port
+    )
+    compliance = await asyncio.to_thread(client.get_or_create_collection, "compliance_docs")
+    current_count = int(await asyncio.to_thread(compliance.count))
     if threshold is not None and current_count >= threshold:
         return {
             "skipped": 1,
@@ -2156,7 +2255,7 @@ async def fix_compliance_doc_embeddings(
     }
     for record in imports:
         try:
-            if _has_compliance_embedding_for_filename(record.filename):
+            if await asyncio.to_thread(_has_compliance_embedding_for_filename, record.filename):
                 continue
             payload = await _read_import_bytes(record.minio_path)
             full_text = extract_full_text_content(record.filename, payload)
@@ -2167,7 +2266,7 @@ async def fix_compliance_doc_embeddings(
                 continue
             embedding_text = full_text[:200000] if len(full_text) > 200000 else full_text
             detected_type = _infer_detected_type_from_record(record)
-            embed_import_text(
+            await _embed_import_text_async(
                 import_id=record.id,
                 text=embedding_text,
                 metadata={
@@ -2184,7 +2283,7 @@ async def fix_compliance_doc_embeddings(
         except Exception as exc:  # noqa: BLE001
             stats["errors"] += 1
             logger.error("Embedding repair failed for import {} ({}): {}", record.id, record.filename, exc)
-    stats["final_count"] = int(compliance.count())
+    stats["final_count"] = int(await asyncio.to_thread(compliance.count))
     return stats
 
 
@@ -2242,22 +2341,41 @@ async def backfill_missing_content_hashes_if_needed(
         updated = 0
         errors = 0
         minio_client = get_minio_client()
+
+        def _fetch_object(object_path: str) -> bytes:
+            response = minio_client.get_object(settings.minio_bucket, object_path)
+            try:
+                return response.read()
+            finally:
+                response.close()
+                response.release_conn()
+
         for row in imports_to_backfill:
             if not row.minio_path:
                 errors += 1
+                logger.warning(
+                    "Content hash backfill skipped import_id={} filename={!r} status={}: no minio_path",
+                    row.id,
+                    row.filename,
+                    row.status.value if hasattr(row.status, "value") else row.status,
+                )
                 continue
             try:
-                response = minio_client.get_object(settings.minio_bucket, row.minio_path)
-                payload = response.read()
-                response.close()
-                response.release_conn()
+                payload = await asyncio.to_thread(_fetch_object, row.minio_path)
                 row.content_hash = compute_content_hash(payload)
                 if row.file_size is None:
                     row.file_size = len(payload)
                 row.updated_at = datetime.now(timezone.utc)
                 updated += 1
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 errors += 1
+                logger.warning(
+                    "Content hash backfill failed import_id={} filename={!r} minio_path={!r}: {}",
+                    row.id,
+                    row.filename,
+                    row.minio_path,
+                    exc,
+                )
         await session.commit()
         return {
             "ran": True,
@@ -2331,7 +2449,7 @@ async def process_import_with_options(
             embedding_text = full_text or content
             if len(embedding_text) > 200000:
                 embedding_text = embedding_text[:200000]
-            embed_import_text(
+            await _embed_import_text_async(
                 import_id=record.id,
                 text=embedding_text,
                 metadata={
@@ -2405,7 +2523,7 @@ async def process_import_with_options(
                         f"Evidence intelligence links created: {intelligence_result.get('links_created', 0)}",
                     ]
                 )
-                embed_import_text(
+                await _embed_import_text_async(
                     import_id=record.id,
                     text=embedding_text,
                     metadata={
@@ -2418,7 +2536,7 @@ async def process_import_with_options(
                     detected_type=detected_type,
                 )
             elif embedding_text.strip():
-                embed_import_text(
+                await _embed_import_text_async(
                     import_id=record.id,
                     text=embedding_text,
                     metadata={

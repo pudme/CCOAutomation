@@ -424,7 +424,9 @@ async def _collect_candidates_for_item(
     for query in [query_1, query_2, query_3]:
         if not query:
             continue
-        semantic_candidates.extend(_search_chroma(query, n_results=n_results))
+        semantic_candidates.extend(
+            await asyncio.to_thread(_search_chroma, query, n_results=n_results)
+        )
     filename_candidates = await _search_evidence_by_filename_keywords(
         session,
         description,

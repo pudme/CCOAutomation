@@ -752,3 +752,136 @@ export async function matchAuditorEvidence(
   return parsed;
 }
 
+// --- Workforce ---
+
+export async function getWorkforceStaff(): Promise<any[]> {
+  return readJson<any[]>("/workforce/staff");
+}
+
+export async function createWorkforceStaff(payload: Record<string, unknown>): Promise<any> {
+  return readJson<any>("/workforce/staff", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function patchWorkforceStaff(staffId: number, payload: Record<string, unknown>): Promise<any> {
+  return readJson<any>(`/workforce/staff/${staffId}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export async function deleteWorkforceStaff(staffId: number): Promise<any> {
+  return readJson<any>(`/workforce/staff/${staffId}`, { method: "DELETE" });
+}
+
+export async function getWorkforcePursuits(): Promise<any[]> {
+  return readJson<any[]>("/workforce/pursuits");
+}
+
+export async function getWorkforcePursuit(pursuitId: number): Promise<any> {
+  return readJson<any>(`/workforce/pursuits/${pursuitId}`);
+}
+
+export async function createWorkforcePursuit(payload: Record<string, unknown>): Promise<any> {
+  return readJson<any>("/workforce/pursuits", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function patchWorkforcePursuit(pursuitId: number, payload: Record<string, unknown>): Promise<any> {
+  return readJson<any>(`/workforce/pursuits/${pursuitId}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export async function deleteWorkforcePursuit(pursuitId: number): Promise<any> {
+  return readJson<any>(`/workforce/pursuits/${pursuitId}`, { method: "DELETE" });
+}
+
+export async function runWorkforceGapAnalysis(
+  pursuitId: number,
+  includeCanaide = false,
+): Promise<any> {
+  const q = includeCanaide ? "?include_canaide=true" : "?include_canaide=false";
+  return readJson<any>(`/workforce/pursuits/${pursuitId}/gap-analysis${q}`, { method: "POST" });
+}
+
+export async function getWorkforceAssignments(): Promise<any[]> {
+  return readJson<any[]>("/workforce/assignments");
+}
+
+export async function createWorkforceAssignment(payload: Record<string, unknown>): Promise<any> {
+  return readJson<any>("/workforce/assignments", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function patchWorkforceAssignment(
+  assignmentId: number,
+  payload: Record<string, unknown>,
+): Promise<any> {
+  return readJson<any>(`/workforce/assignments/${assignmentId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteWorkforceAssignment(assignmentId: number): Promise<any> {
+  return readJson<any>(`/workforce/assignments/${assignmentId}`, { method: "DELETE" });
+}
+
+export async function getWorkforceGaps(): Promise<any[]> {
+  return readJson<any[]>("/workforce/gaps");
+}
+
+export async function createWorkforceGap(payload: Record<string, unknown>): Promise<any> {
+  return readJson<any>("/workforce/gaps", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function patchWorkforceGap(gapId: number, payload: Record<string, unknown>): Promise<any> {
+  return readJson<any>(`/workforce/gaps/${gapId}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export async function deleteWorkforceGap(gapId: number): Promise<any> {
+  return readJson<any>(`/workforce/gaps/${gapId}`, { method: "DELETE" });
+}
+
+export async function getWorkforceOvercommitment(includeCanaide = false): Promise<any> {
+  const q = includeCanaide ? "?include_canaide=true" : "?include_canaide=false";
+  return readJson<any>(`/workforce/overcommitment${q}`);
+}
+
+// --- Evidence ---
+
+export async function getEvidenceList(params?: {
+  page?: number;
+  page_size?: number;
+  framework?: string;
+  control_id?: string;
+}): Promise<{ page: number; page_size: number; total: number; items: any[] }> {
+  const q = new URLSearchParams();
+  if (params?.page) q.set("page", String(params.page));
+  if (params?.page_size) q.set("page_size", String(params.page_size));
+  if (params?.framework) q.set("framework", params.framework);
+  if (params?.control_id) q.set("control_id", params.control_id);
+  const suffix = q.toString() ? `?${q.toString()}` : "";
+  return readJson(`/evidence${suffix}`);
+}
+
+export async function getEvidence(evidenceId: number, params?: { framework?: string; control_id?: string }): Promise<any> {
+  const q = new URLSearchParams();
+  if (params?.framework) q.set("framework", params.framework);
+  if (params?.control_id) q.set("control_id", params.control_id);
+  const suffix = q.toString() ? `?${q.toString()}` : "";
+  return readJson<any>(`/evidence/${evidenceId}${suffix}`);
+}
+
+export async function patchEvidence(evidenceId: number, payload: Record<string, unknown>): Promise<any> {
+  return readJson<any>(`/evidence/${evidenceId}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export async function patchEvidenceControl(
+  evidenceId: number,
+  controlId: string,
+  payload: { display_name?: string; remove?: boolean },
+): Promise<any> {
+  return readJson<any>(`/evidence/${evidenceId}/controls/${controlId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getEvidenceCorrections(evidenceId: number): Promise<{ evidence_id: number; items: any[] }> {
+  return readJson(`/evidence/${evidenceId}/corrections`);
+}
+

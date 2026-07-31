@@ -86,6 +86,15 @@ async def patch_finding(
             subject=finding.finding_id,
             detail=f"Finding {finding.finding_id} status changed to {finding.status.value}",
         )
+    elif payload.notes or payload.owner:
+        await log_change(
+            session,
+            category="finding",
+            action="Finding updated",
+            subject=finding.finding_id,
+            detail=f"Finding {finding.finding_id} notes/owner updated",
+            triggered_by="api",
+        )
     await session.commit()
     await session.refresh(finding)
     return {"status": "updated", "finding_id": finding.finding_id}
@@ -118,6 +127,15 @@ async def add_corrective_action(
         notes=payload.notes,
     )
     session.add(action)
+    await session.flush()
+    await log_change(
+        session,
+        category="finding",
+        action="Corrective action created",
+        subject=finding.finding_id,
+        detail=f"Corrective action created for {finding.finding_id}: {action.description}",
+        triggered_by="api",
+    )
     await session.commit()
     await session.refresh(action)
     return {"id": action.id, "finding_id": finding.finding_id}
@@ -159,6 +177,14 @@ async def patch_corrective_action(
         action.owner = payload.owner
     if payload.due_date is not None:
         action.due_date = payload.due_date
+    await log_change(
+        session,
+        category="finding",
+        action="Corrective action updated",
+        subject=finding.finding_id,
+        detail=f"Corrective action {action.id} updated for {finding.finding_id}",
+        triggered_by="api",
+    )
     await session.commit()
     return {"status": "updated", "id": action.id}
 

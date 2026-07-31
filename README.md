@@ -66,7 +66,7 @@ bash start.sh
 
 The first start takes several minutes while Docker downloads and builds everything. Wait until your browser opens automatically, or go to:
 
-**http://localhost:3000/dashboard**
+**http://localhost:3001/dashboard**
 
 ### 2c. Initialize the database (first time only)
 
@@ -93,7 +93,7 @@ When both finish without errors, setup is complete.
 ### Open the app
 
 1. Make sure Docker Desktop is running.
-2. Open your browser and go to: **http://localhost:3000/dashboard**
+2. Open your browser and go to: **http://localhost:3001/dashboard**
 
 If the page does not load, start the platform:
 - **Windows:** double-click `start.bat`
@@ -139,7 +139,7 @@ powershell -ExecutionPolicy Bypass -File setup_windows.ps1
 bash setup_mac.sh
 ```
 
-After this, the platform starts in the background when you log in. Open **http://localhost:3000/dashboard** in your browser as usual.
+After this, the platform starts in the background when you log in. Open **http://localhost:3001/dashboard** in your browser as usual.
 
 ---
 
@@ -161,7 +161,7 @@ When a newer version is available on GitHub:
 3. Rebuild and restart:
    - **Windows:** double-click `rebuild.bat`
    - **Mac:** run `bash rebuild.sh` in Terminal
-4. Open **http://localhost:3000/dashboard**
+4. Open **http://localhost:3001/dashboard**
 
 Your existing data (database, documents) is kept between updates.
 
@@ -188,6 +188,7 @@ Quick reference:
 ```bash
 docker compose up -d              # Start all services
 docker compose up -d --build backend frontend   # Rebuild after code changes
+docker compose build frontend     # Rebuild frontend image after route or component changes (plain `up` reuses the baked Next.js production build)
 docker compose logs -f backend    # View backend logs
 docker compose stop               # Stop all services
 ```

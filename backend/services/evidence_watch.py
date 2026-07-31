@@ -23,6 +23,7 @@ from services.change_log import log_change
 
 # Skip macOS / editor noise in the drop folder
 _SKIP_NAMES = {".ds_store", "thumbs.db", ".gitkeep", ".gitignore"}
+_SKIP_DIRS = {"processed", "quarantine"}
 _SKIP_PREFIXES = (".", "~$",)
 _SUPPORTED_SUFFIXES = {
     ".pdf",
@@ -58,6 +59,17 @@ def _should_skip(path: Path) -> bool:
     return False
 
 
+def _iter_watch_files(watch_path: Path) -> list[Path]:
+    files: list[Path] = []
+    for path in sorted(watch_path.iterdir()):
+        if path.is_dir() and path.name.lower() in _SKIP_DIRS:
+            continue
+        if _should_skip(path):
+            continue
+        files.append(path)
+    return files
+
+
 async def ingest_local_file(
     *,
     path: Path,
@@ -66,15 +78,16 @@ async def ingest_local_file(
     library: str,
 ) -> dict[str, Any]:
     """Local-path entry into the existing import pipeline (MinIO + process_import_with_options)."""
-    file_bytes = path.read_bytes()
+    file_bytes = await asyncio.to_thread(path.read_bytes)
     filename = path.name
     content_hash = compute_content_hash(file_bytes)
     object_name = build_import_object_name(filename)
     client = get_minio_client()
     settings = get_settings()
-    if not client.bucket_exists(settings.minio_bucket):
-        client.make_bucket(settings.minio_bucket)
-    client.put_object(
+    if not await asyncio.to_thread(client.bucket_exists, settings.minio_bucket):
+        await asyncio.to_thread(client.make_bucket, settings.minio_bucket)
+    await asyncio.to_thread(
+        client.put_object,
         settings.minio_bucket,
         object_name,
         io.BytesIO(file_bytes),
@@ -131,18 +144,20 @@ async def ingest_local_file(
 
 
 async def scan_evidence_drop_once() -> dict[str, Any]:
+    from services.background_jobs import enqueue_evidence_watch_ingest
+
     settings = get_settings()
     watch_path = Path(settings.evidence_watch_path)
     library = normalize_library(settings.evidence_watch_library)
     watch_path.mkdir(parents=True, exist_ok=True)
+    (watch_path / "processed").mkdir(parents=True, exist_ok=True)
+    (watch_path / "quarantine").mkdir(parents=True, exist_ok=True)
 
     file_rows: list[dict[str, Any]] = []
     path_by_name: dict[str, Path] = {}
-    for path in sorted(watch_path.iterdir()):
-        if _should_skip(path):
-            continue
+    for path in _iter_watch_files(watch_path):
         try:
-            payload = path.read_bytes()
+            payload = await asyncio.to_thread(path.read_bytes)
         except OSError as exc:
             logger.warning("Evidence watch skip unreadable {}: {}", path, exc)
             continue
@@ -158,8 +173,8 @@ async def scan_evidence_drop_once() -> dict[str, Any]:
     async with AsyncSessionLocal() as session:
         summary, actions = await classify_sync_files(session, files=file_rows, library=library)
 
-    new_count = 0
-    modified_count = 0
+    queued_new = 0
+    queued_modified = 0
     skipped = int(summary.get("unchanged", 0)) + int(summary.get("skipped", 0))
     errors: list[str] = list(summary.get("errors") or [])
 
@@ -171,41 +186,49 @@ async def scan_evidence_drop_once() -> dict[str, Any]:
         path = path_by_name.get(filename)
         if path is None:
             continue
+        existing = action.get("existing")
+        existing_id = getattr(existing, "id", None)
         try:
-            await ingest_local_file(
-                path=path,
-                mode=mode,
-                existing=action.get("existing"),
-                library=library,
-            )
+            async with AsyncSessionLocal() as session:
+                job = await enqueue_evidence_watch_ingest(
+                    session,
+                    path=str(path),
+                    mode=mode,
+                    library=library,
+                    existing_import_id=int(existing_id) if existing_id is not None else None,
+                )
+            if job is None:
+                skipped += 1
+                continue
             if mode == "new":
-                new_count += 1
+                queued_new += 1
             else:
-                modified_count += 1
+                queued_modified += 1
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{filename}: {exc}")
-            logger.error("Evidence watch ingest failed for {}: {}", filename, exc)
+            logger.error("Evidence watch enqueue failed for {}: {}", filename, exc)
 
     result = {
         "scanned": len(file_rows),
-        "new": new_count,
-        "modified": modified_count,
+        "new": queued_new,
+        "modified": queued_modified,
+        "queued": queued_new + queued_modified,
         "skipped": skipped,
         "errors": errors,
         "library": library,
         "path": str(watch_path),
     }
     logger.info(
-        "Evidence watch cycle: path={} library={} scanned={} new={} modified={} skipped={} errors={}",
+        "Evidence watch cycle: path={} library={} scanned={} queued_new={} queued_modified={} skipped={} errors={}",
         watch_path,
         library,
         result["scanned"],
-        result["new"],
-        result["modified"],
-        result["skipped"],
+        queued_new,
+        queued_modified,
+        skipped,
         len(errors),
     )
-    if new_count or modified_count:
+    if queued_new or queued_modified:
         async with AsyncSessionLocal() as session:
             await log_change(
                 session,
@@ -213,7 +236,7 @@ async def scan_evidence_drop_once() -> dict[str, Any]:
                 action="Evidence watch scan",
                 subject=str(watch_path),
                 detail=(
-                    f"Evidence watch: new={new_count}, modified={modified_count}, "
+                    f"Evidence watch queued: new={queued_new}, modified={queued_modified}, "
                     f"skipped={skipped}, scanned={len(file_rows)}"
                 ),
             )

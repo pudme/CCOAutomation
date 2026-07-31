@@ -28,21 +28,22 @@ This is a full-stack web application that runs locally on a Mac.
                          │ HTTP / SSE (streaming)
 ┌────────────────────────▼────────────────────────────────┐
 │                    FASTAPI BACKEND                       │
-│  REST API │ SSE Streaming │ Auth (local) │ Celery Tasks  │
+│  REST API │ SSE Streaming │ Optional X-CCOA-Dev-Key write gate │
+│  BackgroundJob asyncio worker (not Celery)                      │
 └──────┬──────────────────────────┬───────────────────────┘
        │                          │
 ┌──────▼──────┐          ┌────────▼────────┐
 │  AI ENGINE  │          │   INTEGRATIONS  │
-│  Claude API │          │  Notion API     │
-│  Tool Use   │          │  Entra/Graph    │
-│  Agents     │          │  CrowdStrike    │
-└──────┬──────┘          │  NinjaOne       │
-       │                 │  AWS boto3      │
-       │                 └────────┬────────┘
-┌──────▼──────────────────────────▼────────┐
+│  Claude API │          │  Stub package   │
+│  Tool Use   │          │  (not wired)    │
+│  Agents     │          │                 │
+└──────┬──────┘          └─────────────────┘
+       │
+┌──────▼───────────────────────────────────┐
 │              DATA LAYER                   │
 │  PostgreSQL  │  ChromaDB  │  MinIO        │
 │  (records)   │  (vectors) │  (documents)  │
+│  Redis present in compose but idle        │
 └───────────────────────────────────────────┘
 ```
 
@@ -53,11 +54,11 @@ This is a full-stack web application that runs locally on a Mac.
 ### Frontend
 | Component     | Choice                  | Purpose                                         |
 |---------------|-------------------------|-------------------------------------------------|
-| Framework     | Next.js 14 (App Router) | Full-stack React, file-based routing            |
+| Framework     | Next.js 16 (App Router) | Full-stack React, file-based routing            |
 | Styling       | Tailwind CSS + shadcn/ui| Clean, consistent UI components                 |
-| Chat UI       | Custom + Vercel AI SDK  | Streaming chat with Claude, message history     |
+| Chat UI       | Custom SSE client       | Streaming chat with Claude, message history     |
 | State         | Zustand                 | Lightweight global state                        |
-| Data fetching | TanStack Query          | Server state, cache, background refresh         |
+| Data fetching | `lib/api.ts` fetch helpers | Typed REST client (no TanStack Query in use) |
 | Charts        | Recharts                | Compliance scorecard, gap charts                |
 | Icons         | Lucide React            | Consistent iconography                          |
 
@@ -66,7 +67,8 @@ This is a full-stack web application that runs locally on a Mac.
 |---------------|-------------------------|-------------------------------------------------|
 | Framework     | FastAPI                 | Async Python API, SSE support                   |
 | ORM           | SQLAlchemy 2.x (async)  | DB abstraction                                  |
-| Task queue    | Celery + Redis          | Background jobs: ingestion, report generation   |
+| Task queue    | asyncio + `background_jobs` table | In-process worker: reanalyze, evidence-watch ingest |
+| Auth (local)  | Optional `CCOA_DEV_KEY` | Write methods only (`X-CCOA-Dev-Key`); no Cognito yet |
 | Validation    | Pydantic v2             | Request/response schemas                        |
 | Logging       | Loguru                  | Structured logging                              |
 
@@ -83,7 +85,7 @@ This is a full-stack web application that runs locally on a Mac.
 | Primary DB    | PostgreSQL              | All structured records                          |
 | Vector DB     | ChromaDB (local)        | Semantic document search, note ingestion        |
 | Document store| MinIO (local S3)        | Binary document storage (PDF, DOCX, XLSX, PNG)  |
-| Cache/Broker  | Redis                   | Session cache, Celery broker                    |
+| Redis         | Present in compose      | Idle today (CLI health ping only; not a broker) |
 
 Start all infrastructure with: `docker-compose up -d`
 
@@ -98,102 +100,53 @@ compliance_platform/
 ├── .env                               # Secrets — gitignored
 ├── .env.example                       # Documented variable names, no values
 │
-├── frontend/                          # Next.js 14 application
+├── frontend/                          # Next.js 16 application
 │   ├── app/
 │   │   ├── layout.tsx
-│   │   ├── dashboard/page.tsx         # Main compliance dashboard
+│   │   ├── dashboard/page.tsx
 │   │   ├── frameworks/
-│   │   │   ├── page.tsx               # Framework list with readiness rings
-│   │   │   └── [id]/page.tsx          # Framework detail: controls, gaps, evidence
-│   │   ├── controls/[id]/page.tsx     # Control detail: evidence, findings, history
-│   │   ├── documents/page.tsx         # Document library: search, upload, tag
-│   │   ├── findings/page.tsx          # All findings and corrective actions
-│   │   ├── obligations/page.tsx       # External obligations register
-│   │   ├── personnel/page.tsx         # Personnel compliance status
-│   │   └── chat/page.tsx              # AI chat interface — full page
+│   │   ├── documents/page.tsx
+│   │   ├── findings/page.tsx
+│   │   ├── evidence/page.tsx          # Framework-filtered evidence + corrections
+│   │   ├── evidence/[id]/page.tsx
+│   │   ├── obligations/page.tsx
+│   │   ├── personnel/page.tsx
+│   │   ├── workforce/page.tsx         # Staff / pursuits / assignments / gaps
+│   │   ├── workforce/pursuits/[id]/page.tsx
+│   │   └── chat/page.tsx
 │   ├── components/
-│   │   ├── layout/
-│   │   │   ├── Sidebar.tsx            # Left nav
-│   │   │   └── TopBar.tsx             # Audit countdown, alert badges
-│   │   ├── dashboard/
-│   │   │   ├── ReadinessScorecard.tsx # Per-framework readiness rings
-│   │   │   ├── GapSummary.tsx         # Gap counts by domain
-│   │   │   ├── OpenFindings.tsx       # Active findings widget
-│   │   │   └── ObligationsCalendar.tsx
-│   │   ├── chat/
-│   │   │   ├── ChatWindow.tsx         # Main chat UI with streaming
-│   │   │   ├── MessageBubble.tsx      # User and assistant messages
-│   │   │   ├── ToolCallDisplay.tsx    # Shows agent actions inline as they run
-│   │   │   └── SuggestedPrompts.tsx   # Quick-action buttons when chat is empty
-│   │   ├── controls/
-│   │   │   ├── ControlCard.tsx
-│   │   │   ├── EvidenceList.tsx
-│   │   │   └── CrossMapBadge.tsx      # Shows equivalent controls in other frameworks
+│   │   ├── layout/                    # Sidebar, TopBar
+│   │   ├── chat/                      # Custom SSE chat UI (not useChat)
 │   │   └── shared/
-│   │       ├── StatusBadge.tsx        # Green/Yellow/Red status pills
-│   │       └── FileUpload.tsx         # Drag-and-drop evidence upload
 │   └── lib/
-│       ├── api.ts                     # Typed API client + TanStack Query hooks
-│       ├── types.ts                   # Shared TypeScript types
+│       ├── api.ts                     # Typed fetch helpers (no TanStack Query)
+│       ├── types.ts
 │       └── utils.ts
 │
 ├── backend/                           # FastAPI application
-│   ├── main.py                        # App entrypoint, router registration
-│   ├── config.py                      # Settings loaded from .env via pydantic-settings
-│   ├── database.py                    # Async SQLAlchemy engine + session factory
-│   ├── models/
-│   │   ├── compliance.py              # All ORM models (see schema section below)
-│   │   ├── personnel.py              # PersonnelRecord re-export
-│   │   ├── auditor.py                # Auditor checklist models
-│   │   └── workforce.py              # WorkforceStaff / Pursuit / Assignment / Gap
-│   ├── routers/
-│   │   ├── frameworks.py
-│   │   ├── controls.py
-│   │   ├── evidence.py
-│   │   ├── findings.py
-│   │   ├── obligations.py
-│   │   ├── personnel.py
-│   │   ├── workforce.py              # Workforce Alignment CRUD + analysis
-│   │   ├── documents.py
-│   │   ├── reports.py
-│   │   ├── ingest.py                  # Notion + file ingestion endpoints
-│   │   └── chat.py                    # SSE streaming chat endpoint
-│   ├── ai/
-│   │   ├── agent.py                   # Core agentic loop — Claude with tool use
-│   │   ├── tools.py                   # All agent tools (defined below)
-│   │   ├── embeddings.py              # Embed documents into ChromaDB
-│   │   ├── ingestion.py               # Parse unstructured input into compliance actions
-│   │   └── prompts.py                 # System prompt and context assembly
-│   ├── integrations/
-│   │   ├── notion.py                  # Notion API
-│   │   ├── entra.py                   # Microsoft Graph API
-│   │   ├── crowdstrike.py
-│   │   ├── ninjaone.py
-│   │   └── aws.py                     # boto3
+│   ├── main.py                        # Entrypoint, startup ensures, BackgroundJob + watch loops
+│   ├── config.py                      # Settings from .env via pydantic-settings
+│   ├── database.py
+│   ├── models/                        # compliance, personnel, auditor, workforce
+│   ├── routers/                       # frameworks, controls, evidence, findings,
+│   │                                  # obligations, personnel, workforce, documents,
+│   │                                  # reports, import, chat, auditor, …
+│   ├── ai/                            # agent.py, tools.py, gateway.py
+│   ├── integrations/                  # Stub package only (not implemented)
 │   ├── services/
-│   │   ├── gap_scanner.py
-│   │   ├── personnel_checker.py       # Five cross-reference checks (see below)
-│   │   ├── workforce_alignment.py     # Gap analysis + overcommitment (Apprio-default)
-│   │   ├── doc_generator.py           # Generate .docx and .pdf outputs
-│   │   └── scorecard.py
+│   │   ├── background_jobs.py         # asyncio worker (reanalyze + evidence_watch_ingest)
+│   │   ├── evidence_watch.py          # Drop-folder scanner → enqueue BackgroundJob
+│   │   ├── workforce_alignment.py
+│   │   ├── personnel_checker.py
+│   │   ├── import_pipeline.py
+│   │   └── …
 │   ├── workers/
-│   │   ├── celery_app.py
-│   │   ├── ingest_tasks.py
-│   │   ├── sync_tasks.py              # Pull from Entra, CrowdStrike, NinjaOne, AWS
-│   │   └── report_tasks.py
-│   └── config/
-│       └── frameworks/
-│           ├── iso27001_2022.yaml
-│           ├── iso20000_2018.yaml
-│           ├── iso9001_2015.yaml
-│           ├── cmmc_level2.yaml
-│           └── obligations.yaml
+│   │   ├── __init__.py
+│   │   └── sync_tasks.py              # Intentionally disabled stub
+│   └── config/frameworks/             # YAML catalogs (loaded on startup)
 │
 └── templates/
-    ├── apprio_base.docx               # Base Word template with Apprio header/footer
-    ├── policy.j2
-    ├── risk_acceptance.j2
-    └── scorecard.j2
+    └── apprio_base.docx
 ```
 
 ---
@@ -316,18 +269,10 @@ meeting_notes           # All ingested notes and summaries
 
 ## Notion Ingestion Flow
 
-When a Notion page is ingested:
-1. Agent calls `ingest_notion_page(url)` via Notion API
-2. Full page content is chunked and embedded into ChromaDB
-3. Agent reads the content and identifies compliance-relevant items:
-   - Controls mentioned, actions taken, evidence collected, decisions made
-4. Agent proposes specific DB updates as a list of confirmation cards:
-   "NinjaOne logging activated April 22 — close AF-06, add evidence record?"
-5. User approves/rejects each proposed change
-6. Approved changes applied atomically to Postgres
-
-Scheduled sync: configure a Notion database ID in .env. Celery pulls new/updated
-pages on a schedule (default: every 4 hours) and auto-ingests them.
+**Not implemented.** `ingest_notion_page` returns a stub result directing operators to
+`/import/text` or `/import/file`. There is no live Notion API client and no scheduled
+sync worker. External sync tasks under `backend/workers/sync_tasks.py` are intentionally
+disabled.
 
 ---
 
@@ -368,7 +313,7 @@ pages on a schedule (default: every 4 hours) and auto-ingests them.
    in config.py. Never hardcode API keys anywhere.
 
 7. **Stream everything.** All AI responses stream via SSE. No waiting for
-   complete responses. FastAPI SSE → Vercel AI SDK useChat hook in Next.js.
+   complete responses. FastAPI SSE → custom chat client in Next.js (not `useChat`).
 
 8. **Fail loudly.** Descriptive exceptions. Agent reads DB state before acting —
    never assumes or hallucinates current state.
@@ -387,8 +332,9 @@ pages on a schedule (default: every 4 hours) and auto-ingests them.
 
 ```bash
 # Database
-DATABASE_URL=postgresql+asyncpg://compliance:password@localhost:5432/compliance_db
+DATABASE_URL=postgresql+asyncpg://compliance:password@localhost:5433/compliance_db
 REDIS_URL=redis://localhost:6379/0
+CCOA_DEV_KEY=
 
 # Document store
 MINIO_ENDPOINT=localhost:9000
@@ -444,7 +390,7 @@ services:
       POSTGRES_DB: compliance_db
       POSTGRES_USER: compliance
       POSTGRES_PASSWORD: password
-    ports: ["5432:5432"]
+    ports: ["5433:5432"]
     volumes: ["postgres_data:/var/lib/postgresql/data"]
 
   redis:
@@ -551,8 +497,8 @@ Build in this exact order:
 9. `frontend/app/chat/page.tsx` + `ChatWindow.tsx` — working streaming chat
 10. `backend/routers/frameworks.py` + YAML loader
 11. `frontend/app/dashboard/page.tsx` — dashboard pulling real data
-12. `backend/ai/ingestion.py` + `backend/integrations/notion.py`
-13. Remaining routers, service modules, workers, and views
+12. Import pipeline + evidence watch / BackgroundJob worker (integrations remain stubs)
+13. Remaining routers, service modules, and views
 
 **Starting prompt for Cursor:**
 "Read CLAUDE.md completely before writing any code. Then implement step 1 and 2

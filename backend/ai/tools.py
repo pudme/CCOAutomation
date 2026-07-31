@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
@@ -10,12 +11,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
+from framework_constants import FRAMEWORK_DISPLAY_NAMES as _FRAMEWORK_NAME_OVERRIDES
 from models.compliance import (
     AgentActionLog,
     Control,
     ControlStatus,
     CorrectiveAction,
     DataImport,
+    EvidenceControlLink,
     EvidenceItem,
     EvidenceRequirement,
     EvidenceStatus,
@@ -42,13 +45,6 @@ from models.auditor import (
 )
 
 settings = get_settings()
-
-_FRAMEWORK_NAME_OVERRIDES: dict[str, str] = {
-    "iso27001": "ISO/IEC 27001:2022",
-    "iso20000": "ISO/IEC 20000-1:2018",
-    "iso9001": "ISO 9001:2015",
-    "cmmc_l2": "CMMC Level 2",
-}
 
 
 def _to_plain(value: Any) -> Any:
@@ -163,9 +159,11 @@ async def _log_write(
 async def search_documents(session: AsyncSession, query: str) -> list[dict[str, Any]]:
     if not query.strip():
         raise ValueError("query is required")
-    client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
-    collection = client.get_or_create_collection("compliance_docs")
-    result = collection.query(query_texts=[query], n_results=5)
+    client = await asyncio.to_thread(
+        chromadb.HttpClient, host=settings.chroma_host, port=settings.chroma_port
+    )
+    collection = await asyncio.to_thread(client.get_or_create_collection, "compliance_docs")
+    result = await asyncio.to_thread(collection.query, query_texts=[query], n_results=5)
     chunks: list[DocumentChunk] = []
     ids = result.get("ids", [[]])[0]
     docs = result.get("documents", [[]])[0]
@@ -305,9 +303,9 @@ async def create_obligation(
     session: AsyncSession,
     source: str,
     description: str,
-    owner: str | None,
-    due_date: str | None,
-    cadence: str | None,
+    owner: str | None = None,
+    due_date: str | None = None,
+    cadence: str | None = None,
     status: str = "current",
     conversation_id: int | None = None,
 ) -> dict[str, Any]:
@@ -499,7 +497,7 @@ async def update_control_status(
     control_id: str,
     framework: str,
     status: str,
-    notes: str,
+    notes: str | None = None,
     conversation_id: int | None = None,
 ) -> dict[str, Any]:
     parsed_status = ControlStatus(status)
@@ -513,7 +511,8 @@ async def update_control_status(
         raise ValueError("Control not found")
     control, framework_obj = row
     control.status = parsed_status
-    control.status_notes = notes
+    if notes is not None:
+        control.status_notes = notes
     await _log_write(
         session,
         "update_control_status",
@@ -537,17 +536,19 @@ async def add_evidence(
     filename: str,
     evidence_type: str,
     description: str,
-    entity: str | None,
+    entity: str | None = "Apprio",
     conversation_id: int | None = None,
 ) -> dict[str, Any]:
     if not control_ids or not filename.strip():
         raise ValueError("control_ids and filename are required")
     parsed_type = EvidenceType(evidence_type)
+    # Resolve omitted/blank entity at write time so Apprio-only list filters see the row.
+    resolved_entity = (entity or "").strip() or "Apprio"
     item = EvidenceItem(
         filename=filename,
         evidence_type=parsed_type,
         description=description,
-        entity=entity,
+        entity=resolved_entity,
         collected_date=datetime.now(timezone.utc).date().isoformat(),
         status=EvidenceStatus.CURRENT,
     )
@@ -556,7 +557,13 @@ async def add_evidence(
     controls = list(controls_result.scalars())
     if not controls:
         raise ValueError("No controls found for provided control_ids")
-    item.controls = controls
+    # Flush first so we have item.id, then insert association rows explicitly.
+    # Do not assign item.controls (association_proxy) or item.control_links = [...] —
+    # both trigger a lazy load of the collection and raise MissingGreenlet under AsyncSession
+    # (same class of bug as the reanalyze skip-path fix).
+    await session.flush()
+    for control in controls:
+        session.add(EvidenceControlLink(evidence_id=item.id, control_id=control.id))
     await _log_write(
         session,
         "add_evidence",
@@ -565,13 +572,18 @@ async def add_evidence(
             "filename": filename,
             "evidence_type": evidence_type,
             "description": description,
-            "entity": entity,
+            "entity": resolved_entity,
         },
         f"Added evidence {filename}",
         conversation_id,
     )
     await session.commit()
-    return {"id": item.id, "filename": item.filename, "controls": [c.control_id for c in controls]}
+    return {
+        "id": item.id,
+        "filename": item.filename,
+        "entity": item.entity,
+        "controls": [c.control_id for c in controls],
+    }
 
 
 async def create_finding(

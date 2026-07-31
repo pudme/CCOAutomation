@@ -20,8 +20,13 @@ from models.compliance import AppSetting
 _settings = get_settings()
 _client = AsyncAnthropic(api_key=_settings.anthropic_api_key)
 
-MODEL_SONNET = "claude-sonnet-4-5-20250929"
-MODEL_HAIKU = "claude-haiku-4-5-20251001"
+MODEL_SONNET = (_settings.anthropic_model_sonnet or "").strip()
+MODEL_HAIKU = (_settings.anthropic_model_haiku or "").strip()
+if not MODEL_SONNET or not MODEL_HAIKU:
+    raise RuntimeError(
+        "ANTHROPIC_MODEL_SONNET and ANTHROPIC_MODEL_HAIKU must be set "
+        "(via env or config.py Settings defaults)."
+    )
 
 # Approximate costs per call (USD)
 COST_PER_CALL_SONNET = 0.003

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -23,6 +24,8 @@ from services.import_pipeline import run_evidence_intelligence_on_import
 
 REANALYZE_STATUS_KEY = "reanalyze_status"
 REANALYZE_JOB_TYPE = "reanalyze_batch"
+EVIDENCE_WATCH_INGEST_JOB_TYPE = "evidence_watch_ingest"
+_WORKER_JOB_TYPES = (REANALYZE_JOB_TYPE, EVIDENCE_WATCH_INGEST_JOB_TYPE)
 
 
 def _utc_now() -> datetime:
@@ -155,7 +158,7 @@ async def get_next_queued_job(session: AsyncSession) -> BackgroundJob | None:
             select(BackgroundJob)
             .where(
                 BackgroundJob.status == "queued",
-                BackgroundJob.job_type == REANALYZE_JOB_TYPE,
+                BackgroundJob.job_type.in_(_WORKER_JOB_TYPES),
             )
             .order_by(BackgroundJob.created_at.asc(), BackgroundJob.id.asc())
         )
@@ -180,6 +183,129 @@ async def get_next_queued_job(session: AsyncSession) -> BackgroundJob | None:
     await session.commit()
     await session.refresh(job)
     return job
+
+
+async def enqueue_evidence_watch_ingest(
+    session: AsyncSession,
+    *,
+    path: str,
+    mode: str,
+    library: str,
+    existing_import_id: int | None = None,
+) -> BackgroundJob | None:
+    """Enqueue watch ingest if the same path is not already queued/processing."""
+    pending = list(
+        (
+            await session.execute(
+                select(BackgroundJob).where(
+                    BackgroundJob.job_type == EVIDENCE_WATCH_INGEST_JOB_TYPE,
+                    BackgroundJob.status.in_(("queued", "processing")),
+                )
+            )
+        ).scalars()
+    )
+    for row in pending:
+        if (row.payload or {}).get("path") == path:
+            logger.info("Evidence watch ingest already queued for path={}", path)
+            return None
+    job = BackgroundJob(
+        job_type=EVIDENCE_WATCH_INGEST_JOB_TYPE,
+        status="queued",
+        payload={
+            "path": path,
+            "mode": mode,
+            "library": library,
+            "existing_import_id": existing_import_id,
+        },
+        created_at=_utc_now(),
+    )
+    session.add(job)
+    await session.commit()
+    await session.refresh(job)
+    logger.info("Queued evidence_watch_ingest job id={} path={}", job.id, path)
+    return job
+
+
+def _move_watch_file(src: Path, dest_dir_name: str) -> Path:
+    source = Path(src)
+    dest_dir = source.parent / dest_dir_name
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / source.name
+    if dest.exists():
+        stem = source.stem
+        suffix = source.suffix
+        n = 2
+        while True:
+            candidate = dest_dir / f"{stem} ({n}){suffix}"
+            if not candidate.exists():
+                dest = candidate
+                break
+            n += 1
+    source.rename(dest)
+    return dest
+
+
+async def process_evidence_watch_ingest_job(job: BackgroundJob) -> None:
+    from services.evidence_watch import ingest_local_file
+
+    payload = job.payload or {}
+    path_str = str(payload.get("path") or "")
+    mode = str(payload.get("mode") or "new")
+    library = str(payload.get("library") or "main")
+    existing_import_id = payload.get("existing_import_id")
+    path = Path(path_str)
+    started = _utc_now()
+    error_message: str | None = None
+    result: dict[str, Any] = {}
+
+    try:
+        if not path_str or not path.is_file():
+            raise FileNotFoundError(f"Watch ingest path missing: {path_str}")
+        existing: DataImport | None = None
+        if existing_import_id is not None:
+            async with AsyncSessionLocal() as session:
+                existing = (
+                    await session.execute(
+                        select(DataImport).where(DataImport.id == int(existing_import_id))
+                    )
+                ).scalar_one_or_none()
+        ingest_result = await ingest_local_file(
+            path=path,
+            mode=mode,
+            existing=existing,
+            library=library,
+        )
+        moved = _move_watch_file(path, "processed")
+        result = {**ingest_result, "moved_to": str(moved)}
+        status = "complete"
+    except Exception as exc:  # noqa: BLE001
+        error_message = str(exc)
+        status = "failed"
+        logger.error("Evidence watch ingest job id={} failed: {}", job.id, exc)
+        try:
+            if path.is_file():
+                moved = _move_watch_file(path, "quarantine")
+                result = {"moved_to": str(moved), "error": error_message}
+            else:
+                result = {"error": error_message}
+        except Exception as move_exc:  # noqa: BLE001
+            logger.error("Failed to quarantine {}: {}", path, move_exc)
+            result = {"error": error_message, "quarantine_error": str(move_exc)}
+
+    finished = _utc_now()
+    async with AsyncSessionLocal() as session:
+        job_row = (
+            await session.execute(select(BackgroundJob).where(BackgroundJob.id == job.id))
+        ).scalars().first()
+        if job_row is not None:
+            job_row.status = status
+            job_row.finished_at = finished
+            job_row.error_message = error_message
+            job_row.result = {
+                **result,
+                "elapsed_seconds": int((finished - started).total_seconds()),
+            }
+            await session.commit()
 
 
 async def process_reanalysis_job(job: BackgroundJob) -> None:
@@ -368,7 +494,10 @@ async def run_background_job_worker() -> None:
                 job = await get_next_queued_job(session)
             if job is not None:
                 logger.info("Processing background job id={} type={}", job.id, job.job_type)
-                await process_reanalysis_job(job)
+                if job.job_type == EVIDENCE_WATCH_INGEST_JOB_TYPE:
+                    await process_evidence_watch_ingest_job(job)
+                else:
+                    await process_reanalysis_job(job)
         except Exception as exc:  # noqa: BLE001
             logger.error("Background worker error: {}", exc)
         await asyncio.sleep(5)

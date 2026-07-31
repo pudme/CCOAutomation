@@ -59,7 +59,9 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    ports: ["8010:8010"]
+    # Host publish on loopback only; process still listens 0.0.0.0 inside the container
+    # so other compose services can reach backend:8010 on the Docker network.
+    ports: ["127.0.0.1:8010:8010"]
     environment:
       - DATABASE_URL=postgresql+asyncpg://compliance:password@postgres:5432/compliance_db
       - REDIS_URL=redis://redis:6379/0
@@ -97,7 +99,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    ports: ["3000:3000"]
+    ports: ["${FRONTEND_HOST_PORT:-3001}:3000"]
     environment:
       - API_BASE_URL=http://backend:8010
       - NEXT_PUBLIC_API_URL=http://localhost:8010

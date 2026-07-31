@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { CalendarClock, ClipboardList, FileText, Folder, LayoutDashboard, MessageSquare, Settings, Shield, Users } from "lucide-react";
+import { Briefcase, CalendarClock, ClipboardList, FileSearch, FileText, Folder, LayoutDashboard, MessageSquare, Settings, Shield, Users } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { useAuditInfo } from "@/lib/hooks";
@@ -14,9 +14,11 @@ const NAV_ITEMS = [
   { href: "/documents", label: "Documents", icon: FileText },
   { href: "/history", label: "Revision History", icon: FileText },
   { href: "/findings", label: "Findings", icon: FileText },
+  { href: "/evidence", label: "Evidence", icon: FileSearch },
   { href: "/auditor", label: "Auditor", icon: ClipboardList },
   { href: "/obligations", label: "Obligations", icon: CalendarClock },
   { href: "/personnel", label: "Personnel", icon: Users },
+  { href: "/workforce", label: "Workforce", icon: Briefcase },
   { href: "/chat", label: "Chat", icon: MessageSquare },
 ];
 const DPA_NAV_ITEMS = [

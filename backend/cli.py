@@ -97,6 +97,10 @@ def cli() -> None:
 def init_db_cmd() -> None:
     async def _run() -> None:
         await init_db()
+        # Match app startup: apply hand-rolled column/index ALTERs on existing DBs.
+        from main import _ensure_auditor_schema_columns
+
+        await _ensure_auditor_schema_columns()
         async with AsyncSessionLocal() as session:
             await seed_audit_date_settings(session)
         click.echo("Database initialized.")

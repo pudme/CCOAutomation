@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from database import get_db
+from framework_constants import NON_CATALOG_FRAMEWORKS
 from models.compliance import Control, EvidenceControlLink, Framework
 from services.readiness_mode import get_framework_readiness_with_mode
 
@@ -16,7 +17,7 @@ router = APIRouter(prefix="/frameworks", tags=["frameworks"])
 async def list_frameworks(session: AsyncSession = Depends(get_db)) -> list[dict]:
     result = await session.execute(
         select(Framework)
-        .where(Framework.short_name != "obligations")
+        .where(Framework.short_name.notin_(NON_CATALOG_FRAMEWORKS))
         .order_by(Framework.short_name.asc())
     )
     frameworks = list(result.scalars())

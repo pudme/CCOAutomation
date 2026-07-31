@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from database import get_db
-from models.compliance import Control, EvidenceControlLink, EvidenceItem, EvidenceType, Framework
+from models.compliance import Control, EvidenceControlLink, EvidenceCorrection, EvidenceItem, EvidenceType, Framework
 from services.evidence_corrections import snapshot_evidence_correction
 
 router = APIRouter(prefix="/evidence", tags=["evidence"])
@@ -73,6 +73,7 @@ async def list_evidence(
     page_size: int = Query(default=50, ge=1, le=200),
     control_id: str | None = Query(default=None),
     framework: str | None = Query(default=None),
+    include_canaide: bool = Query(default=False),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     stmt = (
@@ -84,6 +85,8 @@ async def list_evidence(
         )
         .order_by(EvidenceItem.id.desc())
     )
+    if not include_canaide:
+        stmt = stmt.where(EvidenceItem.entity == "Apprio")
     if control_id:
         stmt = stmt.join(EvidenceItem.control_links).join(EvidenceControlLink.control).where(
             Control.control_id == control_id
@@ -136,6 +139,44 @@ async def get_evidence(
     if item is None:
         raise HTTPException(status_code=404, detail="Evidence not found")
     return _serialize_evidence(item, preferred_control_id=control_id, preferred_framework=framework)
+
+
+@router.get("/{evidence_id}/corrections")
+async def list_evidence_corrections(
+    evidence_id: int,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    item = (
+        await session.execute(select(EvidenceItem.id).where(EvidenceItem.id == evidence_id))
+    ).scalar_one_or_none()
+    if item is None:
+        raise HTTPException(status_code=404, detail="Evidence not found")
+    rows = list(
+        (
+            await session.execute(
+                select(EvidenceCorrection)
+                .where(EvidenceCorrection.evidence_id == evidence_id)
+                .order_by(EvidenceCorrection.timestamp.desc(), EvidenceCorrection.id.desc())
+            )
+        ).scalars()
+    )
+    return {
+        "evidence_id": evidence_id,
+        "items": [
+            {
+                "id": row.id,
+                "timestamp": row.timestamp.isoformat() if row.timestamp else None,
+                "control_id": row.control_id,
+                "field_name": row.field_name,
+                "before_value": row.before_value,
+                "after_value": row.after_value,
+                "source": row.source,
+                "operator": row.operator,
+                "detail": row.detail,
+            }
+            for row in rows
+        ],
+    }
 
 
 class EvidencePatchRequest(BaseModel):

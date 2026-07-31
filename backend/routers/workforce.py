@@ -17,6 +17,7 @@ from models.workforce import (
     WorkforcePursuit,
     WorkforceStaff,
 )
+from services.change_log import log_change
 from services.workforce_alignment import analyze_pursuit_gaps, check_overcommitment
 
 router = APIRouter(prefix="/workforce", tags=["workforce"])
@@ -125,10 +126,14 @@ class StaffPatchRequest(BaseModel):
 
 
 @router.get("/staff")
-async def list_staff(session: AsyncSession = Depends(get_db)) -> list[dict]:
-    rows = list(
-        (await session.execute(select(WorkforceStaff).order_by(WorkforceStaff.id.asc()))).scalars()
-    )
+async def list_staff(
+    include_canaide: bool = Query(default=False),
+    session: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    stmt = select(WorkforceStaff).order_by(WorkforceStaff.id.asc())
+    if not include_canaide:
+        stmt = stmt.where(WorkforceStaff.entity == "Apprio")
+    rows = list((await session.execute(stmt)).scalars())
     return [_serialize_staff(row) for row in rows]
 
 
@@ -170,6 +175,15 @@ async def create_staff(payload: StaffCreateRequest, session: AsyncSession = Depe
         utilization_pct=payload.utilization_pct,
     )
     session.add(staff)
+    await session.flush()
+    await log_change(
+        session,
+        category="workforce",
+        action="Staff created",
+        subject=str(staff.id),
+        detail=f"Staff created: {staff.display_name}",
+        triggered_by="api",
+    )
     await session.commit()
     await session.refresh(staff)
     return _serialize_staff(staff)
@@ -192,6 +206,14 @@ async def patch_staff(
     for key, value in data.items():
         setattr(staff, key, value)
     staff.updated_at = datetime.utcnow()
+    await log_change(
+        session,
+        category="workforce",
+        action="Staff updated",
+        subject=str(staff.id),
+        detail=f"Staff updated: {staff.display_name}",
+        triggered_by="api",
+    )
     await session.commit()
     await session.refresh(staff)
     return _serialize_staff(staff)
@@ -204,7 +226,16 @@ async def delete_staff(staff_id: int, session: AsyncSession = Depends(get_db)) -
     ).scalar_one_or_none()
     if staff is None:
         raise HTTPException(status_code=404, detail="Staff not found")
+    display_name = staff.display_name
     await session.delete(staff)
+    await log_change(
+        session,
+        category="workforce",
+        action="Staff deleted",
+        subject=str(staff_id),
+        detail=f"Staff deleted: {display_name}",
+        triggered_by="api",
+    )
     await session.commit()
     return {"status": "deleted", "id": staff_id}
 
@@ -282,6 +313,15 @@ async def create_pursuit(
         source=payload.source or "manual",
     )
     session.add(pursuit)
+    await session.flush()
+    await log_change(
+        session,
+        category="workforce",
+        action="Pursuit created",
+        subject=pursuit.title,
+        detail=f"Pursuit created: {pursuit.title}",
+        triggered_by="api",
+    )
     await session.commit()
     await session.refresh(pursuit)
     return _serialize_pursuit(pursuit)
@@ -304,6 +344,14 @@ async def patch_pursuit(
         data["required_clearance_level"] = ClearanceLevel(value) if value else None
     for key, value in data.items():
         setattr(pursuit, key, value)
+    await log_change(
+        session,
+        category="workforce",
+        action="Pursuit updated",
+        subject=pursuit.title,
+        detail=f"Pursuit updated: {pursuit.title}",
+        triggered_by="api",
+    )
     await session.commit()
     await session.refresh(pursuit)
     return _serialize_pursuit(pursuit)
@@ -316,7 +364,16 @@ async def delete_pursuit(pursuit_id: int, session: AsyncSession = Depends(get_db
     ).scalar_one_or_none()
     if pursuit is None:
         raise HTTPException(status_code=404, detail="Pursuit not found")
+    title = pursuit.title
     await session.delete(pursuit)
+    await log_change(
+        session,
+        category="workforce",
+        action="Pursuit deleted",
+        subject=title,
+        detail=f"Pursuit deleted: {title}",
+        triggered_by="api",
+    )
     await session.commit()
     return {"status": "deleted", "id": pursuit_id}
 
@@ -400,6 +457,18 @@ async def create_assignment(
         status=AssignmentStatus(payload.status),
     )
     session.add(assignment)
+    await session.flush()
+    await log_change(
+        session,
+        category="workforce",
+        action="Assignment created",
+        subject=str(assignment.id),
+        detail=(
+            f"Assignment created: staff={assignment.staff_id} "
+            f"pursuit={assignment.pursuit_id}"
+        ),
+        triggered_by="api",
+    )
     await session.commit()
     await session.refresh(assignment)
     return _serialize_assignment(assignment)
@@ -423,6 +492,14 @@ async def patch_assignment(
         data["status"] = AssignmentStatus(data["status"])
     for key, value in data.items():
         setattr(assignment, key, value)
+    await log_change(
+        session,
+        category="workforce",
+        action="Assignment updated",
+        subject=str(assignment.id),
+        detail=f"Assignment updated: {assignment.id}",
+        triggered_by="api",
+    )
     await session.commit()
     await session.refresh(assignment)
     return _serialize_assignment(assignment)
@@ -438,6 +515,14 @@ async def delete_assignment(assignment_id: int, session: AsyncSession = Depends(
     if assignment is None:
         raise HTTPException(status_code=404, detail="Assignment not found")
     await session.delete(assignment)
+    await log_change(
+        session,
+        category="workforce",
+        action="Assignment deleted",
+        subject=str(assignment_id),
+        detail=f"Assignment deleted: {assignment_id}",
+        triggered_by="api",
+    )
     await session.commit()
     return {"status": "deleted", "id": assignment_id}
 
@@ -507,6 +592,15 @@ async def create_gap(payload: GapCreateRequest, session: AsyncSession = Depends(
         notes=payload.notes,
     )
     session.add(gap)
+    await session.flush()
+    await log_change(
+        session,
+        category="workforce",
+        action="Gap created",
+        subject=str(gap.id),
+        detail=f"Gap created: {gap.labor_category} (pursuit={gap.pursuit_id})",
+        triggered_by="api",
+    )
     await session.commit()
     await session.refresh(gap)
     return _serialize_gap(gap)
@@ -534,6 +628,14 @@ async def patch_gap(
         data["resolved_at"] = datetime.fromisoformat(value) if value else None
     for key, value in data.items():
         setattr(gap, key, value)
+    await log_change(
+        session,
+        category="workforce",
+        action="Gap updated",
+        subject=str(gap.id),
+        detail=f"Gap updated: {gap.labor_category}",
+        triggered_by="api",
+    )
     await session.commit()
     await session.refresh(gap)
     return _serialize_gap(gap)
@@ -546,6 +648,15 @@ async def delete_gap(gap_id: int, session: AsyncSession = Depends(get_db)) -> di
     ).scalar_one_or_none()
     if gap is None:
         raise HTTPException(status_code=404, detail="Gap not found")
+    labor_category = gap.labor_category
     await session.delete(gap)
+    await log_change(
+        session,
+        category="workforce",
+        action="Gap deleted",
+        subject=str(gap_id),
+        detail=f"Gap deleted: {labor_category}",
+        triggered_by="api",
+    )
     await session.commit()
     return {"status": "deleted", "id": gap_id}

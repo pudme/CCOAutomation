@@ -1,9 +1,14 @@
+# NIST CSF 2.0 — category-level catalog (22 categories, CSF.*.* IDs).
+# This is NOT full outcome-level coverage (~108 subcategory outcomes in the
+# published CSF 2.0 Core). Gap analysis against this file is category-grain only.
+
 framework:
   name: "NIST Cybersecurity Framework 2.0"
   short_name: "nist_csf_2"
   version: "2.0"
   description: >
-    NIST Cybersecurity Framework 2.0 core functions and categories.
+    NIST Cybersecurity Framework 2.0 core functions and categories
+    (category-level; not full outcome-subcategory coverage).
 
 controls:
   - id: "CSF.GV.OC"

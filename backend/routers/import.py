@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import uuid
@@ -13,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models.compliance import BatchImport, Control, DataImport, ImportStatus
+from services.change_log import log_change
 from services.import_pipeline import (
     build_import_object_name,
     compute_content_hash,
@@ -131,9 +133,10 @@ async def import_file(
     object_name = build_import_object_name(file.filename)
 
     client = get_minio_client()
-    if not client.bucket_exists(settings.minio_bucket):
-        client.make_bucket(settings.minio_bucket)
-    client.put_object(
+    if not await asyncio.to_thread(client.bucket_exists, settings.minio_bucket):
+        await asyncio.to_thread(client.make_bucket, settings.minio_bucket)
+    await asyncio.to_thread(
+        client.put_object,
         settings.minio_bucket,
         object_name,
         io.BytesIO(file_bytes),
@@ -188,8 +191,8 @@ async def import_batch(
     batch_id = str(uuid.uuid4())
 
     client = get_minio_client()
-    if not client.bucket_exists(settings.minio_bucket):
-        client.make_bucket(settings.minio_bucket)
+    if not await asyncio.to_thread(client.bucket_exists, settings.minio_bucket):
+        await asyncio.to_thread(client.make_bucket, settings.minio_bucket)
 
     skipped: list[dict[str, str]] = []
     import_ids: list[int] = []
@@ -222,7 +225,8 @@ async def import_batch(
         try:
             file_bytes = await upload.read()
             object_name = build_import_object_name(filename)
-            client.put_object(
+            await asyncio.to_thread(
+                client.put_object,
                 settings.minio_bucket,
                 object_name,
                 io.BytesIO(file_bytes),
@@ -246,9 +250,10 @@ async def import_batch(
             session.add(record)
             await session.flush()
 
-            text = extract_text_content(filename, file_bytes)
-            full_text = extract_full_text_content(filename, file_bytes) or text
-            embed_import_text(
+            text = await asyncio.to_thread(extract_text_content, filename, file_bytes)
+            full_text = await asyncio.to_thread(extract_full_text_content, filename, file_bytes) or text
+            await asyncio.to_thread(
+                embed_import_text,
                 import_id=record.id,
                 text=full_text,
                 metadata={
@@ -297,9 +302,10 @@ async def import_text(
     object_name = build_import_object_name(text_filename)
 
     client = get_minio_client()
-    if not client.bucket_exists(settings.minio_bucket):
-        client.make_bucket(settings.minio_bucket)
-    client.put_object(
+    if not await asyncio.to_thread(client.bucket_exists, settings.minio_bucket):
+        await asyncio.to_thread(client.make_bucket, settings.minio_bucket)
+    await asyncio.to_thread(
+        client.put_object,
         settings.minio_bucket,
         object_name,
         io.BytesIO(content_bytes),
@@ -324,7 +330,8 @@ async def import_text(
     await session.commit()
     await session.refresh(record)
 
-    embed_import_text(
+    await asyncio.to_thread(
+        embed_import_text,
         import_id=record.id,
         text=payload.content,
         metadata={
@@ -559,6 +566,14 @@ async def force_fail_import(
         return {"import_id": record.id, "status": record.status.value}
     record.status = ImportStatus.FAILED
     record.error_message = "Manually failed by operator"
+    await log_change(
+        session,
+        category="import",
+        action="Import force-failed",
+        subject=record.filename,
+        detail=f"Import {record.id} force-failed: {record.filename}",
+        triggered_by="api",
+    )
     await session.commit()
     return {"import_id": record.id, "status": record.status.value}
 
@@ -582,6 +597,14 @@ async def override_detected_type(
         if end != -1:
             notes = notes[:start].rstrip() + " " + notes[end + 1 :].lstrip()
     record.notes = f"{notes.strip()} {marker}".strip()
+    await log_change(
+        session,
+        category="import",
+        action="Import type overridden",
+        subject=record.filename,
+        detail=f"Import {record.id} type overridden to {payload.detected_type}",
+        triggered_by="api",
+    )
     await session.commit()
     return {"import_id": record.id, "status": "override_saved", "detected_type": payload.detected_type}
 
