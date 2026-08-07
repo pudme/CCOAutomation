@@ -38,7 +38,6 @@ from services.evidence_watch import run_evidence_watch_loop
 from services.import_pipeline import (
     backfill_missing_content_hashes_if_needed,
     process_batch_import,
-    process_import,
     run_embedding_migration_if_needed,
 )
 
@@ -410,13 +409,23 @@ async def _resume_queued_imports() -> None:
         else:
             unbatched.append(record.id)
 
-    for batch_id, import_ids in by_batch.items():
-        asyncio.create_task(process_batch_import(batch_id=batch_id, import_ids=sorted(import_ids)))
-    for import_id in sorted(unbatched):
-        asyncio.create_task(process_import(import_id=import_id, content=""))
+    # Sequential resume only. Folder Sync writes unbatched QUEUED rows; the previous
+    # one-create_task-per-import path launched N concurrent process_import coroutines
+    # (observed N=161), each holding an AsyncSession through Claude/MinIO work, and
+    # exhausted the default pool (pool_size=5, max_overflow=10).
+    async def _resume_all_sequentially() -> None:
+        for batch_id, import_ids in by_batch.items():
+            await process_batch_import(batch_id=batch_id, import_ids=sorted(import_ids))
+        if unbatched:
+            await process_batch_import(
+                batch_id="startup-resume-unbatched",
+                import_ids=sorted(unbatched),
+            )
+
+    asyncio.create_task(_resume_all_sequentially())
 
     logger.info(
-        "Startup queued import resume launched: queued_records={}, batches={}, unbatched={}",
+        "Startup queued import resume launched (sequential): queued_records={}, batches={}, unbatched={}",
         len(queued_records),
         len(by_batch),
         len(unbatched),

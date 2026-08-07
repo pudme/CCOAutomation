@@ -1738,13 +1738,16 @@ async def _upsert_evidence_with_controls(
         )
     ).scalars().first()
     created = False
+    # Evidence list defaults to Apprio-only (entity == "Apprio"). Never store import
+    # source_system (e.g. "Manual/Other", "Folder Sync") in entity — that hides rows.
+    resolved_entity = "Apprio"
     if evidence is None:
         evidence = EvidenceItem(
             filename=filename,
             file_path=minio_path,
             evidence_type=evidence_type,
             description=f"{detected_type.replace('_', ' ').title()} import",
-            entity=source_system,
+            entity=resolved_entity,
             collected_date=data_date,
             status=EvidenceStatus.CURRENT,
             notes=recommended_action or f"Imported from {source_system}",
@@ -1763,7 +1766,9 @@ async def _upsert_evidence_with_controls(
         evidence.file_path = minio_path or evidence.file_path
         evidence.evidence_type = evidence_type
         evidence.description = evidence.description or f"{detected_type.replace('_', ' ').title()} import"
-        evidence.entity = evidence.entity or source_system
+        prior_entity = (evidence.entity or "").strip()
+        if not prior_entity or prior_entity in {"Manual/Other", "Folder Sync", "auto-recovered"}:
+            evidence.entity = resolved_entity
         evidence.collected_date = evidence.collected_date or data_date
         evidence.status = EvidenceStatus.CURRENT
         if recommended_action:
